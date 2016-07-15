@@ -53,6 +53,8 @@
 #include "defns.i"
 #include "extern.i"
 
+#include "cpp_wrapper/tree_serializer.h"
+
 /*************************************************************************/
 /*									 */
 /*	Grow single tree or sequence of boosted trees			 */
@@ -77,8 +79,34 @@ void ConstructClassifiers()
 
     Wrong = Alloc(MaxCase+1, ClassNo);
 
+#if false
+    // Pranav: Some debug output
+    // MaxClass = 2 {0: unknown, 1: true, 2: false}
+    printf("maxclass: %d\n", MaxClass);
+    // MaxCase: 24; from 0..24 i.e., total 25 case if there are 25 data points
+    printf("maxcase: %d\n", MaxCase);
+    // boost = 0
+    printf("boost: %d\n", BOOST);
+    // trials = 1
+    printf("trial: %d\n", TRIALS);
+    // CWtAtt = 0
+    printf("cwtatt: %d\n", CWtAtt);
+    // minitems = -1/0/2
+    printf("minitems: %d\n", MINITEMS);
+    // probthresh = 0
+    printf("pobthresh: %d\n", PROBTHRESH);
+    // mcost = 0
+    printf("mcost: %d\n", MCost);
+    // rules = 0/1 depending upon whether -r flag is used or not.
+    printf("ruleS: %d\n", RULES);
+    // leafration = 0/-1 
+    printf("leafratio: %d\n", LEAFRATIO);
+#endif
+
     if ( TRIALS > 1 )
     {
+	assert (false);
+
 	/*  BVoteBlock contains each case's class votes  */
 
 	BVoteBlock = AllocZero((MaxCase+1) * (MaxClass+1), float);
@@ -93,6 +121,7 @@ void ConstructClassifiers()
 
     if ( CWtAtt )
     {
+	assert (false);
 	SetAvCWt();
     }
 
@@ -131,7 +160,8 @@ void ConstructClassifiers()
 
 	memset(Tested, 0, MaxAtt+1);		/* reset tested attributes */
 
-	FormTree(Bp, MaxCase, 0, &Raw[Trial]);
+	// Daniel: Use the new version of formtree (the one that splits PC first)
+	MyFormTree(Bp, MaxCase, 0, &Raw[Trial]);
 
 	/*  Prune the raw tree to minimise expected misclassification cost  */
 
@@ -159,7 +189,8 @@ void ConstructClassifiers()
 
 	memcpy(Case, SaveCase, (MaxCase+1) * sizeof(DataRec)); /* restore */
 
-	Prune(Pruned[Trial]);
+	// Pranav: Turn off pruning
+	//Prune(Pruned[Trial]);
 
 	AdjustAllThresholds(Pruned[Trial]);
 
@@ -174,6 +205,7 @@ void ConstructClassifiers()
 
 	if ( PROBTHRESH )
 	{
+	    assert (false);
 	    SoftenThresh(Pruned[Trial]);
 	}
 
@@ -195,10 +227,34 @@ void ConstructClassifiers()
 	    PrintTree(Pruned[Trial], T_Tree);
 	}
 
+#if DEBUG
+	printf ("\n========== DEBUG ==========\n");
+	verify (Pruned[Trial], DebugCase, DebugImplications, MaxCase);
+	printf ("Tree passed!\n");
+	printf ("========== END ==========\n\n");
+#endif
+
+	// Daniel
+	// Serialize tree to JSON
+	const char * ser = serialize_to_JSON (Pruned[Trial]);
+
+	FILE * JSONfp;
+	if ( ! (JSONfp = GetFile(".json", "w")) )
+    	{
+            Error(NOFILE, "", "");
+        }
+
+	fprintf (JSONfp, ser);
+	fclose(JSONfp);
+	free (ser);
+
+	
 	if ( Trial == TRIALS-1 ) continue;
 
 	/*  Check errors, adjust boost voting, and shift dropped cases
 	    to the front  */
+
+	assert (false);
 
 	ErrWt = Errs = OKWt = Bp = 0;
 	CheckExcl = ( Trial+1 > TRIALS / 2.0 );
@@ -526,6 +582,7 @@ void EvaluateSingle(int Flags)
 
     if ( UTILITY && RULES )
     {
+	assert (false);
 	SaveUtility = UTILITY;
 
 	UTILITY = Min(UTILITY, RuleSet[0]->SNRules);
@@ -563,7 +620,9 @@ void EvaluateSingle(int Flags)
     ForEach(i, 0, MaxCase)
     {
 	RealClass = Class(Case[i]);
-	assert(RealClass > 0 && RealClass <= MaxClass);
+	// TODO Pranav: Uncomment the following comment after the code that propogates 
+	// class for UNKNOWN points has been intergrated.
+	//assert(RealClass > 0 && RealClass <= MaxClass);
 
 	memset(Tested, 0, MaxAtt+1);	/* for usage */
 
@@ -575,8 +634,13 @@ void EvaluateSingle(int Flags)
 	{
 	    Verbosity(1,
 		PredClass = TreeClassify(Case[i], Raw[0]);
-		if ( PredClass != RealClass )
+		// Pranav: Error only if a data point with True/False class value has a different class value 
+		// after construction of the tree. RealClass and PredClass can differ if RealClass was UNKNOWN.
+		if ( RealClass > 0 && PredClass != RealClass )
 		{
+		    // Pranav: Debug output in case of errors
+                    printf("Erroneous point: %f, %f, %f\n", Case[i][1]._cont_val, Case[i][2]._cont_val, Case[i][3]._cont_val);
+                    printf("RealClass: %d PredClass: %d\n\n", RealClass, PredClass);
 		    RawErrs++;
 		})
 
@@ -584,7 +648,7 @@ void EvaluateSingle(int Flags)
 	}
 	assert(PredClass > 0 && PredClass <= MaxClass);
 
-	if ( PredClass != RealClass )
+	if ( RealClass > 0 && PredClass != RealClass )
 	{
 	    Errs++;
 	    if ( MCost ) ECost += MCost[PredClass][RealClass];
@@ -614,14 +678,27 @@ void EvaluateSingle(int Flags)
 
 	Verbosity(1,
 	{
-	    fprintf(Of, "  %4d %4d(%4.1f%%)  ",
-		   TreeSize(Raw[0]), RawErrs, 100 * RawErrs / Tests);
+	    fprintf(Of, " %3d %3d %4d(%4.1f%%)  ",
+		   TotalTreeSize(Raw[0]), TreeSize(Raw[0]), RawErrs, 100 * RawErrs / Tests);
 	})
 
 	/*  Results for pruned tree  */
 
-	fprintf(Of, "  %4d %4d(%4.1f%%)",
-	       TreeSize(Pruned[0]), Errs, 100 * Errs / Tests);
+	int total_tree_size = TotalTreeSize(Pruned[0]);
+	fprintf(Of, " %3d %3d %4d(%4.1f%%)",
+	       total_tree_size, TreeSize(Pruned[0]), Errs, 100 * Errs / Tests);
+
+	FILE *F = GetFile(".out", "a");
+	assert(F != NULL);
+	fprintf(F, "%d\n", total_tree_size);
+	fclose(F);
+
+
+	// Pranav: Debug outut in case there are errors.
+        //printf("RawErrs: %d  Errs: %d\n", RawErrs, Errs);
+        assert (RawErrs <= 0);
+        assert (Errs <= 0);
+
     }
 
     if ( MCost )
