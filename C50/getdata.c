@@ -35,6 +35,8 @@
 #include "defns.i"
 #include "extern.i"
 
+#include "cpp_wrapper/clist.h" // Daniel
+#include "cpp_wrapper/file_tools.h" // Daniel
 
 #define Inc 2048
 
@@ -74,12 +76,16 @@ void GetData(FILE *Df, Boolean Train, Boolean AllowUnknownClass)
     }
     else
     {
+	assert (false);
+
 	CaseSpace = MaxCase + 1;
 	MaxCase++;
     }
 
     if ( SAMPLE )
     {
+	assert (false);
+
 	if ( Train )
 	{
 	    SampleFrom = CountData(Df);
@@ -103,6 +109,8 @@ void GetData(FILE *Df, Boolean Train, Boolean AllowUnknownClass)
 
 	if ( SAMPLE )
 	{
+	    assert (false);
+
 	    SelectTrain = KRandom() < WantTrain / (float) LeftTrain--;
 
 	    /*  Include if
@@ -237,6 +245,18 @@ DataRec GetDataRec(FILE *Df, Boolean Train)
 
 		DVal(DVec, Att) = UNKNOWN;
 		if ( SomeMiss ) SomeMiss[Att] = true;
+
+		if(ClassAtt && Att == ClassAtt)
+		{
+
+		    // Pranav: Very important. Now ensuring that the Class and DVal(., ClassAtt)
+		    // are consistent.
+		    DVal(DVec, Att) = 0;
+
+		    #if false
+		    printf("Assigning classvalue to unknown %d\n", DVal(DVec, ClassAtt));
+		    #endif
+		}
 	    }
 	    else
 	    if ( Att != ClassAtt && ! strcmp(Name, "N/A") )
@@ -256,6 +276,8 @@ DataRec GetDataRec(FILE *Df, Boolean Train)
 		{
 		    if ( StatBit(Att, DISCRETE) )
 		    {
+			assert (false);
+
 			if ( Train || XVAL )
 			{
 			    /*  Add value to list  */
@@ -344,10 +366,17 @@ DataRec GetDataRec(FILE *Df, Boolean Train)
 	    if ( Discrete(ClassAtt) )
 	    {
 		Class(DVec) = XDVal(DVec, ClassAtt);
+		if (Unknown (DVec, ClassAtt))
+		{
+		    // DVal(DVec, ClassAtt) is now already assigned to 0.
+		    assert (false);
+		    assert (Class(DVec) == 0);
+		}
 	    }
 	    else
 	    if ( Unknown(DVec, ClassAtt) || NotApplic(DVec, ClassAtt) )
 	    {
+		assert (false);
 		Class(DVec) = 0;
 	    }
 	    else
@@ -518,4 +547,103 @@ void CheckValue(DataRec DVec, Attribute Att)
 
 	CVal(DVec, Att) = UNKNOWN;
     }
+}
+
+
+/*************************************************************************/
+/*                                                                       */
+/*  Read implications from file with given name, which is constructed    */
+/*  from the given filename and extension                                */
+/*                                                                       */
+/*************************************************************************/
+void GetImplications(const char * extension) {
+
+	if(!extension) {
+		printf("Invalid extension '%s'\n", extension);
+	}
+
+	// Construct filename
+	char complete_filename[strlen(FileStem) + strlen(extension) + 1]; 
+	strcpy(complete_filename, FileStem);
+	strcat(complete_filename, extension);
+
+	// Read implications
+	Implications = new_cmap();
+	if (! read_implications(complete_filename, Implications)) {
+		printf("Problem with implication file '%s'\n", complete_filename);
+	}
+
+}
+
+
+/*************************************************************************/
+/*                                                                       */
+/*  Read intervals from file with given name, which is constructed       */
+/*  from the given filename and extension                                */
+/*                                                                       */
+/*************************************************************************/
+void GetIntervals(const char * extension) {
+
+	if(!extension) {
+		printf("Invalid extension '%s'\n", extension);
+		return;
+	}
+
+	// Construct filename
+	char complete_filename[strlen(FileStem) + strlen(extension) + 1]; 
+	strcpy(complete_filename, FileStem);
+	strcat(complete_filename, extension);
+
+	// Read intervals
+	struct clist * lower = new_clist ();
+	struct clist * upper = new_clist ();
+	read_intervals(complete_filename, lower, upper);
+
+	if (lower == NULL || upper == NULL || clist_size (lower) == 0 || clist_size (upper) == 0) {
+		
+		//printf ("There is a problem with the intervals file '%s'\n", complete_filename);
+		delete_clist (lower);
+		delete_clist (upper);
+		return;
+
+	}
+
+	// Add intervals
+	IntervalsLowerBounds = clist_to_array (lower);
+	IntervalsUpperBounds = clist_to_array (upper);
+	delete_clist (lower);
+	delete_clist (upper);
+	assert (IntervalsLowerBounds != NULL && IntervalsUpperBounds != NULL);
+	assert (IntervalsLowerBounds->size == IntervalsUpperBounds->size);
+
+	// Check intervals
+	int ok = 1;
+	int i;
+	for (i = 0; i < IntervalsLowerBounds->size; i++) {
+		
+		if (IntervalsLowerBounds->entries[i] < MinAtt ||
+			IntervalsLowerBounds->entries[i] > MaxAtt ||
+			IntervalsUpperBounds->entries[i] < MinAtt ||
+			IntervalsUpperBounds->entries[i] > MaxAtt ||
+			IntervalsLowerBounds->entries[i] > IntervalsUpperBounds->entries[i]) {
+
+			ok = 0;
+			break;
+
+		}
+
+	}
+	
+
+	// Clean up if there is a problem
+	if (!ok) {
+
+		printf ("There was something wrong with the intervals!\n\n"); 
+		delete_array (IntervalsLowerBounds);
+		IntervalsLowerBounds = NULL;
+		delete_array (IntervalsUpperBounds);
+		IntervalsUpperBounds = NULL;
+
+	}
+
 }
