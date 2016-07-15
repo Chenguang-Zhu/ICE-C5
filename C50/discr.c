@@ -270,6 +270,7 @@ double DiscrKnownBaseInfo(CaseCount KnownCases, DiscrValue MaxVal)
 void DiscreteTest(Tree Node, Attribute Att)
 /*   ------------  */
 {
+
     int		S, Bytes;
     DiscrValue	v, CutV;
 
@@ -304,4 +305,5 @@ void DiscreteTest(Tree Node, Attribute Att)
 	Node->NodeType = BrDiscr;
 	Node->Tested   = Att;
     }
+
 }

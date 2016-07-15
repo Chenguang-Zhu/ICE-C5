@@ -5,11 +5,16 @@
 #*									 *#
 #*************************************************************************#
 
+.PHONY: clean
 
-CC	= gcc -ffloat-store
+
+CC	= gcc -g -ffloat-store
 CFLAGS = -g -Wall -DVerbOpt -O0
-LFLAGS = $(S)
-SHELL  = /bin/csh
+LFLAGS = $(S) -static-libgcc -static-libstdc++
+SHELL  = /bin/bash
+
+# Debug (uncomment if desired)
+CFLAGS += -DDEBUG
 
 
 #	Definitions of file sets
@@ -42,7 +47,8 @@ src =\
 	getnames.c\
 	modelfiles.c\
 	utility.c\
-	xval.c
+	xval.c\
+	debug.c
 
 obj =\
 	 c50.o global.o\
@@ -55,9 +61,12 @@ obj =\
 	 update.o utility.o\
 	 modelfiles.o\
 	 attwinnow.o\
+	 debug.o\
 
 all:
-	make c5.0
+	echo $(CC)
+	make -C cpp_wrapper
+	make c5.0dbg c5.0.dt_penalty c5.0.dt_entropy
 	$(CC) $(LFLAGS) -o report report.c -lm
 
 
@@ -65,22 +74,35 @@ all:
 
 c5.0dbg:\
 	$(obj) defns.i extern.i text.i Makefile
-	$(CC) -g -o c5.0dbg $(obj) -lm
+	$(CC) $(CFLAGS) -g -o c5.0dbg $(obj) cpp_wrapper/cpp_wrapper.a -lm -lstdc++
 
 
 # production version
 
-c5.0:\
+c5.0.dt_penalty:\
 	$(src) defns.i text.i Makefile
 	cat defns.i $(src)\
 		| egrep -v 'defns.i|extern.i' >c50gt.c
-	$(CC) $(LFLAGS) -O3 -o c5.0 c50gt.c -lm
-	strip c5.0
+	$(CC) $(LFLAGS) -DPENALTY -O3 -o c5.0.dt_penalty c50gt.c cpp_wrapper/cpp_wrapper.a -lm -lstdc++
+	strip c5.0.dt_penalty
 	rm c50gt.c
 
+
+
+c5.0.dt_entropy:\
+	$(src) defns.i text.i Makefile
+	cat defns.i $(src)\
+		| egrep -v 'defns.i|extern.i' >c50gt.c
+	$(CC) $(LFLAGS) -O3 -o c5.0.dt_entropy c50gt.c cpp_wrapper/cpp_wrapper.a -lm -lstdc++
+	strip c5.0.dt_entropy
+	rm c50gt.c
 
 $(obj):		Makefile defns.i extern.i text.i
 
 
 .c.o:
 	$(CC) $(CFLAGS) -c $<
+
+clean:
+	make -C cpp_wrapper clean
+	-rm -rf *.o c5.0.dt_penalty c5.0.dt_entropy c5.0dbg  report
