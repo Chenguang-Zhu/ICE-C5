@@ -414,6 +414,10 @@ void GetNames(FILE *Nf)
     fclose(Nf);
 
     if ( ErrMsgs > 0 ) Goodbye(1);
+
+    assert (MaxClass == 2);
+    assert (! strcmp(ClassName[1], "true"));
+    assert (! strcmp(ClassName[2], "false"));
 }
 
 
