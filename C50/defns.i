@@ -1,7 +1,6 @@
 /*************************************************************************/
 /*									 */
 /*  Copyright 2010 Rulequest Research Pty Ltd.				 */
-/*  Author: Ross Quinlan (quinlan@rulequest.com) [Rev Jan 2016]		 */
 /*									 */
 /*  This file is part of C5.0 GPL Edition, a single-threaded version	 */
 /*  of C5.0 release 2.07.						 */
@@ -52,6 +51,8 @@
 
 #include "text.i"
 
+// Pranav
+#include "cpp_wrapper/cmap.h"
 
 
 /*************************************************************************/
@@ -77,9 +78,11 @@
 
 
 /*  Alternative random number generator  */
-
+/* Pranav: Redefine AltRandom
 #define AltRandom		drand48()
 #define	AltSeed(x)		srand48(x)
+*/
+#define AltRandom		(double)((rand()%RAND_MAX)/RAND_MAX)
 
 #define Free(x)			{free(x); x=0;}
 
@@ -96,6 +99,7 @@
 #define	 false	   0
 #define	 true	   1
 #define	 None	   -1
+#define NegInfinity -1E38 
 #define	 Epsilon   1E-4
 #define	 MinLeaf   0.05		/* minimum weight for non-null leaf */
 #define	 Width	   80		/* approx max width of output */
@@ -172,11 +176,13 @@
 #define  Before(n1,n2)  (n1->Tested < n2->Tested ||\
 			n1->Tested == n2->Tested && n1->Cut < n2->Cut)
 
-#define	 Swap(a,b)	{DataRec xab;\
-			 assert(a >= 0 && a <= MaxCase &&\
-			        b >= 0 && b <= MaxCase);\
-			 xab = Case[a]; Case[a] = Case[b]; Case[b] = xab;}
+#define	 SwapWithImplications(a,b)	{DataRec xab;\
+			                assert(a >= 0 && a <= MaxCase &&\
+			                b >= 0 && b <= MaxCase);\
+			                xab = Case[a]; Case[a] = Case[b]; Case[b] = xab;\
+                                        }
 
+#define	 Swap(a,b)	{assert (false);}
 
 #define	 NOFILE		 0
 #define	 BADCLASSTHRESH	 1
@@ -390,6 +396,10 @@ typedef	 struct _environment
 			*SubsetEntr,		/* subset entropy */
 			**MergeInfo,		/* info of merged subsets i,j */
 			**MergeEntr;		/* entropy ditto */
+
+            struct cmap     *Implications;
+            struct array    *permutation;
+            struct array    *classAttr;
 	 }
 	 EnvRec;
 
@@ -442,7 +452,6 @@ typedef struct _rulesetrec
 	    RuleTree	RT;		/* rule tree (see ruletree.c) */
 	 }
 	 RuleSetRec, *CRuleSet;
-
 
 
 /*************************************************************************/
@@ -507,6 +516,8 @@ CaseNo	    CountData(FILE *Df);
 int	    StoreIVal(String s);
 void	    FreeData(void);
 void	    CheckValue(DataRec Case, Attribute Att);
+void 		GetImplications(const char * extension); // Daniel
+void		GetIntervals(const char * extension); // Daniel
 
 	/* mcost.c */
 
@@ -524,19 +535,30 @@ void	    ScanTree(Tree T, Boolean *Used);
 void	    InitialiseTreeData(void);
 void	    FreeTreeData(void);
 void	    SetMinGainThresh(void);
-void	    FormTree(CaseNo, CaseNo, int, Tree *);
+// Daniel's Changes
+//void	    FormTree(CaseNo, CaseNo, int, Tree *);
+void	    FormTree(CaseNo, CaseNo, int, Tree *, Attribute, Attribute);
+void	    MyFormTree(CaseNo, CaseNo, int, Tree *);
+//Attribute   ChooseSplit(CaseNo Fp, CaseNo Lp, CaseCount Cases, Boolean Sampled);
+Attribute   ChooseSplit(CaseNo Fp, CaseNo Lp, CaseCount Cases, Boolean Sampled, Attribute, Attribute);
+//void	    Divide(Tree Node, CaseNo Fp, CaseNo Lp, int Level);
+void	    Divide(Tree Node, CaseNo Fp, CaseNo Lp, int Level, Attribute, Attribute);
+// end
 void	    SampleEstimate(CaseNo Fp, CaseNo Lp, CaseCount Cases);
 void	    Sample(CaseNo Fp, CaseNo Lp, CaseNo N);
-Attribute   ChooseSplit(CaseNo Fp, CaseNo Lp, CaseCount Cases, Boolean Sampled);
 void	    ProcessQueue(CaseNo WFp, CaseNo WLp, CaseCount WCases);
-Attribute   FindBestAtt(CaseCount Cases);
+//Attribute   FindBestAtt(CaseCount Cases);
+Attribute   FindBestAttNew(CaseCount Cases, Attribute upperBound, Attribute lowerBound);
 void	    EvalDiscrSplit(Attribute Att, CaseCount Cases);
 CaseNo	    Group(DiscrValue, CaseNo, CaseNo, Tree);
 CaseCount   SumWeights(CaseNo, CaseNo);
 CaseCount   SumNocostWeights(CaseNo, CaseNo);
 void	    FindClassFreq(double [], CaseNo, CaseNo);
 void	    FindAllFreq(CaseNo, CaseNo);
-void	    Divide(Tree Node, CaseNo Fp, CaseNo Lp, int Level);
+
+/* Pranav: */
+int         assignClass(int caseNo, int classValue);
+
 
 	/* discr.c */
 
@@ -549,8 +571,17 @@ void	    DiscreteTest(Tree Node, Attribute Att);
 	/* contin.c */
 
 void	    EvalContinuousAtt(Attribute Att, CaseNo Fp, CaseNo Lp);
+void	    EvalContinuousAttAlg1(Attribute Att, CaseNo Fp, CaseNo Lp);
+void	    EvalContinuousAttAlg2(Attribute Att, CaseNo Fp, CaseNo Lp);
+void	    EvalContinuousAttAlg3(Attribute Att, CaseNo Fp, CaseNo Lp);
+void	    EvalContinuousAttAlg4(Attribute Att, CaseNo Fp, CaseNo Lp);
+void	    EvalContinuousAttAlg5(Attribute Att, CaseNo Fp, CaseNo Lp);
+void	    EvalContinuousAttAlg6(Attribute Att, CaseNo Fp, CaseNo Lp);
 void	    EstimateMaxGR(Attribute Att, CaseNo Fp, CaseNo Lp);
 void	    PrepareForContin(Attribute Att, CaseNo Fp, CaseNo Lp);
+void	    PrepareForContinAlg1(Attribute Att, CaseNo Fp, CaseNo Lp);
+void	    PrepareForContinAlg2(Attribute Att, CaseNo Fp, CaseNo Lp);
+void	    PrepareForContinAlg3(Attribute Att, CaseNo Fp, CaseNo Lp);
 CaseNo	    PrepareForScan(CaseNo Lp);
 void	    ContinTest(Tree Node, Attribute Att);
 void	    AdjustAllThresholds(Tree T);
@@ -562,6 +593,7 @@ ContValue   GreatestValueBelow(ContValue Th, CaseNo *Ep);
 double	    ComputeGain(double BaseInfo, float UnknFrac, DiscrValue MaxVal,
 			CaseCount TotalCases);
 double	    TotalInfo(double V[], DiscrValue MinVal, DiscrValue MaxVal);
+double	    ImplicationInfo(double pos, double neg, double implications);
 void	    PrintDistribution(Attribute Att, DiscrValue MinVal,
 			DiscrValue MaxVal, double **Freq, double *ValFreq,
 			Boolean ShowNames);
@@ -624,6 +656,7 @@ Boolean	    Satisfies(DataRec Case, Condition OneCond);
 	/* sort.c */
 
 void	    Quicksort(CaseNo Fp, CaseNo Lp, Attribute Att);
+void 		QuicksortWithImplications(CaseNo Fp, CaseNo Lp, Attribute Att, struct array * permutation); // Daniel
 void	    Cachesort(CaseNo Fp, CaseNo Lp, SortRec *SRec);
 
 	/* trees.c */
@@ -725,7 +758,7 @@ void	    FindTestCodes(void);
 float	    CondBits(Condition C);
 void	    SetInitialTheory(void);
 void	    CoverClass(ClassNo Target);
-double	    MessageLength(RuleNo NR, double RuleBits, float Errs);
+int	    MessageLength(RuleNo NR, double RuleBits, float Errs);
 void	    HillClimb(void);
 void	    InitialiseVotes(void);
 void	    CountVotes(CaseNo i);
@@ -784,5 +817,7 @@ void	    Shuffle(int *Vec);
 void	    Summary(void);
 float	    SE(float sum, float sumsq, int no);
 
+	/* Daniel: debug.c */
+int verify (Tree, DataRec *, struct cmap *, int);
 
-
+int are_equal (DataRec *, DataRec *, int, int);
