@@ -62,6 +62,7 @@ extern	int		IValsSize,
 			IValsOffset;
 
 extern	int		MaxAtt,
+			MinAtt,
 			MaxClass,
 			MaxDiscrVal,
 			MaxLabel,
@@ -167,4 +168,16 @@ extern	FILE		*TRf;
 extern	char		Fn[500];
 
 extern	FILE  		*Of;
+
+
+// Daniel
+extern struct cmap * Implications;
+extern struct array * IntervalsUpperBounds;
+extern struct array * IntervalsLowerBounds;
+
+#ifdef DEBUG
+extern struct cmap * DebugImplications;
+
+extern DataRec * DebugCase;
+#endif
 
