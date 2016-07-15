@@ -23,7 +23,6 @@
 /*************************************************************************/
 
 
-
 /*************************************************************************/
 /*									 */
 /*	Main routine, C5.0						 */
@@ -34,11 +33,14 @@
 
 #include "defns.i"
 #include "extern.i"
-#include <signal.h>
 
-#include <sys/unistd.h>
-#include <sys/time.h>
-#include <sys/resource.h>
+#include "cpp_wrapper/cmap.h"
+
+//#include <signal.h>
+
+//#include <sys/unistd.h>
+//#include <sys/time.h>
+//#include <sys/resource.h>
 
 #define SetFOpt(V)	V = strtod(OptArg, &EndPtr);\
 			if ( ! EndPtr || *EndPtr != '\00' ) break;\
@@ -46,6 +48,37 @@
 #define SetIOpt(V)	V = strtol(OptArg, &EndPtr, 10);\
 			if ( ! EndPtr || *EndPtr != '\00' ) break;\
 			ArgOK = true
+
+// Daniel
+int select_rhs_if_lhs_is_positive(int lhs, int rhs) {
+	assert (0 <= lhs && lhs <= MaxCase && 0 <= rhs && rhs <= MaxCase);
+	assert (Class(Case[lhs]) == DVal(Case[lhs], ClassAtt));
+	assert (Class(Case[rhs]) == DVal(Case[rhs], ClassAtt));
+
+	// Consistency check of the sample
+	if (Class(Case[lhs]) == 1 && Class(Case[rhs]) == 2) {
+		fprintf(Of, "Found inconsistency in sample, exiting");
+		exit (1);
+	}
+
+	return (Class(Case[lhs]) == 1 && Class(Case[rhs]) == 0);
+
+}
+
+int select_rhs_if_lhs_is_negative(int lhs, int rhs) {
+	assert (0 <= lhs && lhs <= MaxCase && 0 <= rhs && rhs <= MaxCase);
+	assert (Class(Case[lhs]) == DVal(Case[lhs], ClassAtt));
+	assert (Class(Case[rhs]) == DVal(Case[rhs], ClassAtt));
+
+	// Consistency check of the sample
+	if (Class(Case[lhs]) == 1 && Class(Case[rhs]) == 2) {
+		fprintf(Of, "Found inconsistency in sample, exiting");
+		exit (1);
+	}
+
+	return (Class(Case[lhs]) == 2 && Class(Case[rhs]) == 0);
+}
+// End Daniel
 
 
 int main(int Argc, char *Argv[])
@@ -60,21 +93,23 @@ int main(int Argc, char *Argv[])
     CaseNo		SaveMaxCase;
     Attribute		Att;
 
-    struct rlimit RL;
+    // Pranav:
+    // struct rlimit RL;
 
     /*  Make sure there is a largish runtime stack  */
 
+    /* Pranav:
     getrlimit(RLIMIT_STACK, &RL);
 
     RL.rlim_cur = Max(RL.rlim_cur, 20 * 1024 * 1024);
 
-    if ( RL.rlim_max > 0 )	/* -1 if unlimited */
+    if ( RL.rlim_max > 0 )	// -1 if unlimited 
     {
 	RL.rlim_cur = Min(RL.rlim_max, RL.rlim_cur);
     }
 
     setrlimit(RLIMIT_STACK, &RL);
-
+    */
 
     /*  Check for output to be saved to a file  */
 
@@ -223,11 +258,86 @@ int main(int Argc, char *Argv[])
     /*  Read data file  */
 
     if ( ! (F = GetFile(".data", "r")) ) Error(NOFILE, "", "");
+#if false
+    // Pranav: Now allow even the class attribute to be unknown
     GetData(F, true, false);
+#else
+    GetData(F, true, true);
+#endif
     fprintf(Of, TX_ReadData(MaxCase+1, MaxAtt, FileStem));
+
+    #if false
+    {
+	int i = 62;
+	printf("datapoint in Case %i: %f,%f,%f,%d\n", i, Case[i][1]._cont_val, Case[i][2]._cont_val, Case[i][3]._cont_val, Case[i][ClassAtt]._discr_val);
+
+    }
+    #endif
+
+	// Daniel: Read implications
+	GetImplications(".implications");
+	fprintf( Of, "Read %d implications\n", cmap_number_of_implications (Implications));
+	//cmap_print(Implications);
+
+	// Daniel: Read intervals
+	// Needs to be called after reading the data!
+	GetIntervals(".intervals");
+	if (IntervalsUpperBounds) {
+		fprintf( Of, "Read %d intervals\n", IntervalsUpperBounds->size);
+
+#ifdef DEBUG
+		int i;
+		for (i = 0; i<IntervalsUpperBounds->size; i++) {
+			printf ("Bounds for attribute value %s (%d): [%d, %d]\n", AttValName[1][i+2], (i+2), IntervalsLowerBounds->entries[i], IntervalsUpperBounds->entries[i]);
+		}
+#endif
+		
+	}
+
+#ifdef DEBUG
+	// Save implications and original data for later verification
+	DebugImplications = cmap_copy (Implications);
+	fprintf( Of, "Copied %d implications\n", cmap_number_of_implications (DebugImplications));
+
+    DebugCase = (DataRec *) malloc((MaxCase + 1) * sizeof (DataRec));
+	int my_MaxCase = MaxCase;
+	int my_MaxAtt = MaxAtt;
+	int loop;
+	ForEach (loop, 0, MaxCase) {
+
+		DebugCase[loop] = (DataRec)malloc((MaxAtt + 1) * sizeof (AttValue));
+
+		int k;
+		ForEach (k, 0, MaxAtt) {
+			memcpy (&(DebugCase[loop][k]), &(Case[loop][k]), sizeof (AttValue));
+		}
+
+	}
+
+	if (! are_equal (Case, DebugCase, my_MaxCase, my_MaxAtt)) {
+		printf ("Copy was not successful!\n");
+		return 1;
+	} else {
+		printf ("Copying of Cases successful\n");
+	}
+#endif
+
+	// Daniel: Initial implication propagation
+	// Forward
+	struct array * forward = cmap_select_rhs (Implications, & select_rhs_if_lhs_is_positive);
+	cmap_propagate (forward, Implications, 1, & assignClass);
+	delete_array (forward);
+	forward = NULL;
+	// Backward
+	struct array * backward = cmap_select_lhs (Implications, & select_rhs_if_lhs_is_negative);
+	cmap_propagate (backward, Implications, 2, & assignClass);
+	delete_array (backward);
+	backward = NULL;
+	// End
 
     if ( XVAL && (F = GetFile(".test", "r")) )
     {
+	assert (false);
 	SaveMaxCase = MaxCase;
 	GetData(F, false, false);
 	fprintf(Of, TX_ReadTest(MaxCase-SaveMaxCase, FileStem));
@@ -242,6 +352,7 @@ int main(int Argc, char *Argv[])
 
     if ( ! NOCOSTS && (F = GetFile(".costs", "r")) )
     {
+	assert (false);
 	GetMCosts(F);
 	if ( MCost )
 	{
@@ -253,6 +364,7 @@ int main(int Argc, char *Argv[])
 
     if ( AttExIn )
     {
+	assert (false);
 	fprintf(Of, "%s", ( AttExIn == -1 ? T_AttributesOut : T_AttributesIn ));
 
 	ForEach(Att, 1, MaxAtt)
@@ -276,11 +388,13 @@ int main(int Argc, char *Argv[])
     InitialiseTreeData();
     if ( RULES )
     {
+	assert (false);
 	RuleSet = AllocZero(TRIALS+1, CRuleSet);
     }
 
     if ( WINNOW )
     {
+	assert (false);
 	NotifyStage(WINNOWATTS);
 	Progress(-MaxAtt);
 	WinnowAtts();
@@ -288,11 +402,13 @@ int main(int Argc, char *Argv[])
 
     if ( XVAL )
     {
+	assert (false);
 	CrossVal();
     }
     else
     {
 	ConstructClassifiers();
+
 
 	/*  Evaluation  */
 
@@ -305,6 +421,7 @@ int main(int Argc, char *Argv[])
 
 	if ( (F = GetFile(( SAMPLE ? ".data" : ".test" ), "r")) )
 	{
+	    assert (false);
 	    NotifyStage(READTEST);
 	    fprintf(Of, "\n");
 
@@ -322,8 +439,33 @@ int main(int Argc, char *Argv[])
 
     fprintf(Of, T_Time, ExecTime() - StartTime);
 
+#ifdef DEBUG
+	if (! are_equal (Case, DebugCase, my_MaxCase, my_MaxAtt)) {
+		printf ("There has been reorganization of data in Cases!\n");
+	} else {
+		printf ("There has been NO reorganization of data in Cases\n");
+	}
+#endif
+
 #ifdef VerbOpt
     Cleanup();
+#endif
+
+	// Daniel
+	delete_cmap (Implications);
+	if (IntervalsUpperBounds) {
+		delete_array (IntervalsUpperBounds);
+	}
+	if (IntervalsLowerBounds) {
+		delete_array (IntervalsLowerBounds);
+	}
+
+#ifdef DEBUG
+	delete_cmap (DebugImplications);
+	ForEach (loop, 0, my_MaxCase) {
+		free (DebugCase[loop]);
+	}
+	free (DebugCase);
 #endif
 
     return 0;
