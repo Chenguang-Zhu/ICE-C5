@@ -428,7 +428,10 @@ void EstimateErrs(Tree T, CaseNo Fp, CaseNo Lp, int Sh, int Flags)
 
 	    SetGlobalUnitWeights(Flags & UNITWEIGHTS);
 
-	    Divide(T, Fp, Lp, 0);
+		// Daniel: Remove this part of code as it conflicts with the modifications
+		assert(false);
+		exit(1);
+	    //Divide(T, Fp, Lp, 0);
 	}
 
 	EstimateErrs(T, Fp, Lp, Sh, UPDATE);
