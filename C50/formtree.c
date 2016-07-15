@@ -35,6 +35,7 @@
 #include "defns.i"
 #include "extern.i"
 
+#include "cpp_wrapper/cmap.h"
 
 Boolean		MultiVal,	/* all atts have many values */
 		Subsample;	/* use subsampling */
@@ -86,6 +87,8 @@ void InitialiseTreeData()
 
     if ( SUBSET )
     {
+	assert (false);
+
 	InitialiseBellNumbers();
 	Subset = Alloc(MaxAtt+1, Set *);
 
@@ -171,6 +174,11 @@ void InitialiseTreeData()
 
     GEnv.SRec = Alloc(MaxCase+1, SortRec);
 
+    // Pranav: Allocate the new *Implications-related* data structures.
+    GEnv.Implications = 0;
+    GEnv.permutation = new_array(MaxCase+1);
+    GEnv.classAttr = new_array(MaxCase+1);
+
     if ( SUBSET )
     {
 	GEnv.SubsetInfo = Alloc(MaxDiscrVal+1, double);
@@ -251,6 +259,10 @@ void FreeTreeData()
     Free(GEnv.ClassFreq);
     FreeUnlessNil(GEnv.SRec);
 
+    delete_cmap(GEnv.Implications);
+    delete_array(GEnv.permutation);
+    delete_array(GEnv.classAttr);
+
     if ( GEnv.SubsetInfo )
     {
 	Free(GEnv.SubsetInfo);
@@ -309,6 +321,143 @@ void SetMinGainThresh()
 }
 
 
+/*
+ * Defers the construction of the tree by one new root node which splits on the first attribute
+ * (assuming that it is discrete). If no intervals are given, this method falls back to the
+ * original FormTree method.
+ */
+void MyFormTree(CaseNo Fp, CaseNo Lp, int Level, Tree * Result)
+{
+
+	// Sanity check
+	if (Fp > Lp) {
+	
+		printf ("This version of C5 does not support constructing a tree from empty data!\n");
+		exit (EXIT_FAILURE);
+	
+	}
+
+	/*
+	 * If no intervals are give, fall back to original C5
+	 */
+	if (IntervalsUpperBounds == NULL || IntervalsUpperBounds->size == 0) {
+
+		Verbosity(1, 
+			fprintf(Of, "No intervals given, falling back to original C5 ICE"));
+
+		FormTree(Fp, Lp, Level, Result, MaxAtt, 1);
+
+	}
+
+	/*
+	 * Otherwise, create new root and call original C5 on children
+	 */
+	else {
+
+		Attribute FirstSplitAttr = 1;
+
+		int i;	
+		
+		// Make sure the first split attribute is a discrete attribute
+		if (!Discrete (FirstSplitAttr)) {
+
+			printf ("The first attribute has to be a discrete attribute!\n");
+			exit (EXIT_FAILURE);
+
+		}		
+
+		// Make sure that there are as many intervals as discrete attribute values
+		if (IntervalsLowerBounds->size != MaxAttVal[FirstSplitAttr] - 1) {
+
+			printf ("The number of discrete attribute (%d) values and the number of intervals (%d) does not match!\n", MaxAttVal[FirstSplitAttr] - 1, IntervalsLowerBounds->size);
+			exit (EXIT_FAILURE);
+
+		}
+		
+	
+		/*
+		 * Sort cases on FirstSplitAttr
+		 */
+		struct array * permutation = new_array (MaxCase + 1);
+		ForEach (i, 0, MaxCase) {
+			permutation->entries[i] = i;
+		}
+		QuicksortWithImplications(Fp, Lp, FirstSplitAttr, permutation);
+		struct array * inverse_permutation = array_invert(permutation);
+		struct cmap * sortedImplications = cmap_copy_and_rename(Implications, inverse_permutation);
+		delete_cmap (Implications);
+		Implications = sortedImplications;
+		delete_array (permutation);
+		delete_array (inverse_permutation);
+		
+		/*
+		 * Store upper and lower index of cases with given PC (index 0 is ?, we don't want to use that)
+		 */
+		 CaseNo LowerCase[MaxCase + 1];
+		memset (LowerCase, 0, (MaxAttVal[FirstSplitAttr] + 1)  * sizeof(CaseNo));
+		CaseNo UpperCase[MaxAttVal[FirstSplitAttr]];
+		memset (UpperCase, 0, (MaxAttVal[FirstSplitAttr] + 1)  * sizeof(CaseNo));
+		char AttValueFound[MaxAttVal[FirstSplitAttr]];
+		memset (AttValueFound, 0, (MaxAttVal[FirstSplitAttr] + 1) * sizeof(char));
+
+		DiscrValue cur = DVal(Case[Fp], FirstSplitAttr);
+		AttValueFound[cur] = 1;
+		LowerCase[cur] = Fp;
+		ForEach (i, Fp + 1, Lp) {
+
+			assert (i > 0 ? DVal(Case[i], FirstSplitAttr) >= DVal(Case[i - 1], FirstSplitAttr) : 1);
+
+			DiscrValue v = DVal(Case[i], FirstSplitAttr);
+
+			if (v != cur) {
+
+				assert (!AttValueFound[v]);
+				
+				AttValueFound[v] = 1;
+				LowerCase[v] = i;
+				UpperCase[cur] = i - 1;
+				cur = v;
+
+			}
+
+		}
+		UpperCase[cur] = Lp;
+
+#ifdef DEBUG
+		ForEach (i, 1, MaxAttVal[FirstSplitAttr]) {
+		
+			printf ("%s=%d (%s), enabled=%s: [%d, %d]\n", AttName[FirstSplitAttr], i, AttValName[FirstSplitAttr][i], AttValueFound[i] ? "yes" : "no", LowerCase[i], UpperCase[i]);
+		
+		}
+#endif
+
+		/*
+		 * Construct tree
+		 */
+		// Let us create a new root node
+		Tree Node;
+		*Result = Node = Leaf(Nil, 0, 0.0, 0.0);
+		DiscreteTest (Node, FirstSplitAttr);
+		
+		// Recursively construct tree
+		ForEach(i, 1, Node->Forks) {
+
+			// Only construct subtree if attribute value is present
+			if (AttValueFound[i]) {
+				FormTree(LowerCase[i], UpperCase[i], Level + 1, &Node->Branch[i], IntervalsUpperBounds->entries[i - 2], IntervalsLowerBounds->entries[i - 2]);
+			}
+			
+			// Create a leaf with classified with the first attribute vale (whatever that might be)
+			else {
+				Node->Branch[i] = Leaf(Nil, 1, 0.0, 0.0);
+			}
+
+		}
+
+	}
+
+}
+
 
 /*************************************************************************/
 /*								 	 */
@@ -333,9 +482,7 @@ void SetMinGainThresh()
 /*	forming a leaf						 	 */
 /*								 	 */
 /*************************************************************************/
-
-
-void FormTree(CaseNo Fp, CaseNo Lp, int Level, Tree *Result)
+void FormTree(CaseNo Fp, CaseNo Lp, int Level, Tree *Result, Attribute upper, Attribute lower)
 /*   --------  */
 {
     CaseCount	Cases=0, TreeErrs=0;
@@ -367,6 +514,8 @@ void FormTree(CaseNo Fp, CaseNo Lp, int Level, Tree *Result)
 	}
     }
 
+    /*  Ignoring the cases which have UNKNOWN class values while computing
+        the total Cases.  */
     ForEach(c, 1, MaxClass)
     {
 	Cases += ClassFreq[c];
@@ -389,11 +538,51 @@ void FormTree(CaseNo Fp, CaseNo Lp, int Level, Tree *Result)
 	- all cases are of the same class
 	- there are not enough cases to split  */
 
-    if ( ClassFreq[BestLeaf] >= 0.999 * Cases  ||
+    // Pranav: Return only if there are no errors; otherwise split further. 
+    //if ( ClassFreq[BestLeaf] >= 0.999 * Cases  ||
+    if ( ClassFreq[BestLeaf] >= Cases  ||
 	 Cases < 2 * MINITEMS ||
 	 MaxLeaves < 2 )
     {
 	if ( Now == FORMTREE ) Progress(Cases);
+
+	// Pranav: Propagate the classification at the leaf to even nodes labeled unknown.
+
+	int numAllCases = Lp - Fp + 1;
+	int numUnknownClassifiedCases = numAllCases - Cases ;
+
+	if ( numUnknownClassifiedCases > 0 )
+	{
+
+	    struct array * unknownClassifiedCases = new_array(numUnknownClassifiedCases);
+
+	    int i, j = 0;
+
+            ForEach(i, Fp, Lp)
+            {
+		#if false
+		printf("Class Attr of Case %d: %d\n", i, Class(Case[i]));
+		printf("Class Attr of Case %d: %d\n", i, DVal(Case[i], ClassAtt));
+		#endif
+	    	if ( Class(Case[i]) == 0 )	
+	    	{
+		    assert(DVal(Case[i], ClassAtt) == 0);
+		    unknownClassifiedCases->entries[j] = i;
+		    j++;
+	        }
+		else
+		    assert(DVal(Case[i], ClassAtt) != 0);
+	    }
+
+	    assert (j == numUnknownClassifiedCases) ;
+
+	    int success = cmap_propagate(unknownClassifiedCases, Implications, BestLeaf, & assignClass);
+
+	    assert (success > 0);
+
+	    delete_array(unknownClassifiedCases);
+	}
+
 	return;
     }
 
@@ -408,6 +597,8 @@ void FormTree(CaseNo Fp, CaseNo Lp, int Level, Tree *Result)
     if ( Subsample && No(Fp, Lp) > 5 * MaxClass * SAMPLEUNIT &&
 	 (ClassFreq[Least] * MaxClass * SAMPLEUNIT) / No(Fp, Lp) >= 10 )
     {
+	assert (false);
+
 	SampleEstimate(Fp, Lp, Cases);
 	Sampled   = true;
     }
@@ -416,8 +607,9 @@ void FormTree(CaseNo Fp, CaseNo Lp, int Level, Tree *Result)
 	Sampled = false;
     }
 
-    BestAtt = ChooseSplit(Fp, Lp, Cases, Sampled);
-
+    BestAtt = ChooseSplit(Fp, Lp, Cases, Sampled, upper, lower);
+	assert (lower <= BestAtt && BestAtt <= upper);
+	
     /*  Decide whether to branch or not  */
 
     if ( BestAtt == None )
@@ -440,6 +632,9 @@ void FormTree(CaseNo Fp, CaseNo Lp, int Level, Tree *Result)
 
 	if ( Discrete(BestAtt) )
 	{
+	    printf("BestAtt is: %d %s\n", BestAtt, AttName[BestAtt]);
+	    assert (false);
+
 	    if ( SUBSET && MaxAttVal[BestAtt] > 3 && ! Ordered(BestAtt) )
 	    {
 		SubsetTest(Node, BestAtt);
@@ -458,7 +653,7 @@ void FormTree(CaseNo Fp, CaseNo Lp, int Level, Tree *Result)
 
 	++Tested[BestAtt];
 
-	Divide(Node, Fp, Lp, Level);
+	Divide(Node, Fp, Lp, Level, upper, lower);
 
 	--Tested[BestAtt];
 
@@ -471,6 +666,8 @@ void FormTree(CaseNo Fp, CaseNo Lp, int Level, Tree *Result)
 
 	if ( TreeErrs >= 0.999 * Node->Errors )
 	{
+	    assert (false);
+
 	    Verbosity(1,
 		fprintf(Of, "<%d> Collapse tree for %d cases to leaf %s\n",
 			    Level, No(Fp,Lp), ClassName[BestLeaf]))
@@ -578,11 +775,11 @@ void Sample(CaseNo Fp, CaseNo Lp, CaseNo N)
 /*	Evaluate splits and choose best attribute to split on.		 */
 /*	If Sampled, Gain[] and Info[] have been estimated on		 */
 /*	sample and unlikely candidates are not evaluated on all cases	 */
-/*								 	 */
+/*							 	 */
 /*************************************************************************/
+// Daniel: upper and lower define an interval of attributes from which the split can be performed  
 
-
-Attribute ChooseSplit(CaseNo Fp, CaseNo Lp, CaseCount Cases, Boolean Sampled)
+Attribute ChooseSplit(CaseNo Fp, CaseNo Lp, CaseCount Cases, Boolean Sampled, Attribute upper, Attribute lower)
 /*        -----------  */
 {
     Attribute	Att;
@@ -595,6 +792,8 @@ Attribute ChooseSplit(CaseNo Fp, CaseNo Lp, CaseCount Cases, Boolean Sampled)
 
     if ( Sampled )
     {
+	assert (false);
+
 	/*  If samples have been used, do not re-evaluate discrete atts
 	    or atts that have low GR  */
 
@@ -630,7 +829,10 @@ Attribute ChooseSplit(CaseNo Fp, CaseNo Lp, CaseCount Cases, Boolean Sampled)
     }
     else
     {
-	for ( Att = MaxAtt ; Att > 0 ; Att-- )
+
+	// Daniel: We only want to consider attributes within the allowed interval of attributes
+	//for ( Att = MaxAtt ; Att > 0 ; Att-- )
+	for ( Att = upper ; Att >= lower ; Att-- )
 	{
 	    Gain[Att] = None;
 
@@ -639,17 +841,30 @@ Attribute ChooseSplit(CaseNo Fp, CaseNo Lp, CaseCount Cases, Boolean Sampled)
 		continue;
 	    }
 
+		//printf ("Adding %s (%d) to worklist; lower is %d, upper is %d\n", AttName[Att], Att, lower, upper);
 	    Waiting[NWaiting++] = Att;
 	}
     }
 
     ProcessQueue(Fp, Lp, Cases);
 
-    return FindBestAtt(Cases);
+    Attribute BestAttr = FindBestAttNew(Cases, upper, lower);
+    assert (BestAttr != None);
+
+    /*
+    if(BestAttr == None)
+    {
+    	ProcessQueue(Fp, Lp, Cases);
+	BestAttr = FindBestAttNew(Cases, upper, lower);
+    }
+    assert (BestAttr != None);
+    */
+    return BestAttr;
 }
 
 
-
+/*  Pranav: WCases is the total number of cases classified as TRUE or FALSE. Does not 
+    include cases with UNKNOWN class attribute  */
 void ProcessQueue(CaseNo WFp, CaseNo WLp, CaseCount WCases)
 /*   ------------  */
 {
@@ -662,16 +877,20 @@ void ProcessQueue(CaseNo WFp, CaseNo WLp, CaseCount WCases)
 
 	if ( Discrete(Att) )
 	{
+	    assert (false);
 	    EvalDiscrSplit(Att, WCases);
 	}
 	else
 	if ( SampleFrac < 1 )
 	{
+	    assert (false);
 	    EstimateMaxGR(Att, WFp, WLp);
 	}
 	else
 	if ( Sampled )
 	{
+	    assert (false);
+
 	    Info[Att] = -1E16;
 
 	    if ( EstMaxGR[Att] > ValThresh )
@@ -687,12 +906,39 @@ void ProcessQueue(CaseNo WFp, CaseNo WLp, CaseCount WCases)
 	}
 	else
 	{
-	    EvalContinuousAtt(Att, WFp, WLp);
+	    if (0)
+	    	/* Ignores the implication data points while computing the entropy/gain 
+	       	   for a particular cut. */
+	        EvalContinuousAttAlg1(Att, WFp, WLp);
+
+	    else if (0)
+
+		/* Penalty for the number of Implications cut. */
+	        EvalContinuousAttAlg2(Att, WFp, WLp);
+
+#ifndef PENALTY
+	    else if (1)
+
+		/* Entropy for the Implication sample */
+	        EvalContinuousAttAlg3(Att, WFp, WLp);
+#endif
+
+	    else if (0)
+	        EvalContinuousAttAlg4(Att, WFp, WLp);
+	
+	    else if (0)
+		/* Alg 2 + 3 */
+	        EvalContinuousAttAlg5(Att, WFp, WLp);
+
+#ifdef PENALTY
+	    else
+		/* Penalty for Implications cut but not those from neg -> pos */
+	        EvalContinuousAttAlg6(Att, WFp, WLp);
+
+#endif
 	}
     }
 }
-
-
 
 /*************************************************************************/
 /*								 	 */
@@ -701,7 +947,7 @@ void ProcessQueue(CaseNo WFp, CaseNo WLp, CaseCount WCases)
 /*								 	 */
 /*************************************************************************/
 
-
+#if false
 Attribute FindBestAtt(CaseCount Cases)
 /*	  -----------  */
 {
@@ -714,6 +960,7 @@ Attribute FindBestAtt(CaseCount Cases)
 	/*  Update the number of possible attributes for splitting and
 	    average gain (unless very many values)  */
 
+	// TODO Pranav: consider the gain regardless of the value of Gain, MaxAttVal, etc.
 	if ( Gain[Att] >= Epsilon &&
 	     ( MultiVal || MaxAttVal[Att] < 0.3 * (MaxCase + 1) ) )
 	{
@@ -741,12 +988,14 @@ Attribute FindBestAtt(CaseCount Cases)
     /*  Find best attribute according to Gain Ratio criterion subject
 	to threshold on minimum gain  */
 
+    // TODO Pranav: Set BestVal to -LargeVal to encourage it to be even negative.
     BestVal = -Epsilon;
     BestAtt = None;
-
     ForEach(Att, 1, MaxAtt)
     {
-	if ( Gain[Att] >= 0.999 * MinGain && Info[Att] > 0 )
+	// Pranav: Dont introduce errors if all splits have gain < MinGain.
+	//if ( Gain[Att] >= 0.999 * MinGain && Info[Att] > 0 )
+	if ( Info[Att] > 0 )
 	{
 	    Val = Gain[Att] / Info[Att];
 	    NBr = ( MaxAttVal[Att] <= 3 || Ordered(Att) ? 3 :
@@ -765,6 +1014,121 @@ Attribute FindBestAtt(CaseCount Cases)
     }
 
     return BestAtt;
+}
+#endif
+
+
+/*************************************************************************/
+/*								 	 */
+/*	Adjust each attribute's gain to reflect choice and		 */
+/*	select att with maximum GR					 */
+/*								 	 */
+/*************************************************************************/
+
+
+Attribute FindBestAttNew(CaseCount Cases, Attribute upperBound, Attribute lowerBound)
+/*	  -----------  */
+{
+    double	BestVal, Val, MinGain=1E6, AvGain=0, MDL;
+    Attribute	Att, BestAtt, Possible=0;
+    DiscrValue	NBr, BestNBr=MaxDiscrVal+1;
+
+    ForEach(Att, lowerBound, upperBound)
+    {
+	/*  Update the number of possible attributes for splitting and
+	    average gain (unless very many values)  */
+
+	// Pranav: consider the gain regardless of the value of Gain, MaxAttVal, etc.
+	if ( Gain[Att] >= Epsilon &&
+	     ( MultiVal || MaxAttVal[Att] < 0.3 * (MaxCase + 1) ) )
+	{
+	    Possible++;
+	    AvGain += Gain[Att];
+	}
+    }
+
+    /*  Set threshold on minimum gain  */
+
+    AvGain /= Possible;
+    MDL     = Log(Possible) / Cases;
+    MinGain = AvGain * AvGainWt + MDL * MDLWt;
+
+    Verbosity(2,
+	fprintf(Of, "\tav gain=%.3f, MDL (%d) = %.3f, min=%.3f\n",
+		    AvGain, Possible, MDL, MinGain))
+
+    /*  Find best attribute according to Gain Ratio criterion subject
+	to threshold on minimum gain  */
+
+    BestVal = NegInfinity;
+    BestAtt = None;
+
+    ForEach(Att, lowerBound, upperBound)
+    {
+	if ( Skip(Att) || Att == ClassAtt )
+	{
+	    continue;
+	}
+	// Pranav: Dont introduce errors if all splits have gain < MinGain.
+	//if ( Gain[Att] >= 0.999 * MinGain && Info[Att] > 0 )
+	if ( Info[Att] > 0 )
+	{
+	    Val = Gain[Att] / Info[Att];
+	    NBr = ( MaxAttVal[Att] <= 3 || Ordered(Att) ? 3 :
+		    SUBSET ? Subsets[Att] : MaxAttVal[Att] );
+
+	    if ( Val > BestVal ||
+	         (Val == BestVal && fabs(Bar[Att]) < fabs(Bar[BestAtt])) || 
+		  Val > 0.999 * BestVal &&
+		   ( NBr < BestNBr ||
+		      NBr == BestNBr && Gain[Att] > Gain[BestAtt] ) ) 
+	    {
+
+		BestAtt = Att;
+		BestVal = Val;
+		BestNBr = NBr;
+	    }
+	    /*
+	    else if (Val == BestVal && fabs(Bar[Att]) < fabs(Bar[BestAtt]))
+	    {
+		BestAtt = Att;
+		BestVal = Val;
+		BestNBr = NBr;	
+	    }*/
+	}
+    }
+
+    if (BestAtt != None)
+        return BestAtt;
+
+    printf("Info is probably zero for all attributes\n");
+    BestVal = NegInfinity;
+    ForEach(Att, lowerBound, upperBound)
+    {
+	if ( Skip(Att) || Att == ClassAtt )
+	{
+	    continue;
+	}
+
+	// Pranav: Dont introduce errors if all splits have gain < MinGain.
+	//if ( Gain[Att] >= 0.999 * MinGain && Info[Att] > 0 )
+	    Val = Gain[Att] ;
+	    NBr = ( MaxAttVal[Att] <= 3 || Ordered(Att) ? 3 :
+		    SUBSET ? Subsets[Att] : MaxAttVal[Att] );
+
+	    if ( Val > BestVal ||
+		 Val > 0.999 * BestVal &&
+		 ( NBr < BestNBr ||
+		   NBr == BestNBr && Gain[Att] > Gain[BestAtt] ) )
+	    {
+		BestAtt = Att;
+		BestVal = Val;
+		BestNBr = NBr;
+	    }
+    }
+
+    return BestAtt;
+
 }
 
 
@@ -832,7 +1196,7 @@ void EvalDiscrSplit(Attribute Att, CaseCount Cases)
 /*************************************************************************/
 
 
-void Divide(Tree T, CaseNo Fp, CaseNo Lp, int Level)
+void Divide(Tree T, CaseNo Fp, CaseNo Lp, int Level, Attribute upper, Attribute lower)
 /*   ------  */
 {
     CaseNo	Bp, Ep, Missing, Cases, i;
@@ -851,6 +1215,8 @@ void Divide(Tree T, CaseNo Fp, CaseNo Lp, int Level)
 
     if ( Missing )
     {
+	assert (false);
+
 	UnitWeights = false;
 
 	/*  If using costs, must adjust branch factors to undo effects of
@@ -893,6 +1259,8 @@ void Divide(Tree T, CaseNo Fp, CaseNo Lp, int Level)
 	/*  Bp -> first value in missing + remaining values
 	    Ep -> last value in missing + current group  */
 
+        /* Pranav: BranchCases counts the total number of points flowing to the particular branch under 
+	   consideration. It also counts the points participating in implications. */
 	BranchCases = CountCases(Bp + Missing, Ep);
 
 	Factor = ( ! Missing ? 0 :
@@ -911,7 +1279,7 @@ void Divide(Tree T, CaseNo Fp, CaseNo Lp, int Level)
 		}
 	    }
 
-	    FormTree(Bp, Ep, Level+1, &T->Branch[v]);
+	    FormTree(Bp, Ep, Level+1, &T->Branch[v], upper, lower);
 
 	    /*  Restore weights if changed  */
 
@@ -967,6 +1335,8 @@ CaseNo Group(DiscrValue V, CaseNo Bp, CaseNo Ep, Tree TestNode)
 
 	if ( SomeMiss[Att] )
 	{
+	    //assert (false);
+
 	    ForEach(i, Bp, Ep)
 	    {
 		if ( Unknown(Case[i], Att) )
@@ -987,6 +1357,8 @@ CaseNo Group(DiscrValue V, CaseNo Bp, CaseNo Ep, Tree TestNode)
 	{
 	    case BrDiscr:
 
+		assert (false);	
+
 		ForEach(i, Bp, Ep)
 		{
 		    if ( DVal(Case[i], Att) == V )
@@ -1000,18 +1372,44 @@ CaseNo Group(DiscrValue V, CaseNo Bp, CaseNo Ep, Tree TestNode)
 	    case BrThresh:
 
 		Thresh = TestNode->Cut;
+
+		// Daniel: Also swap the implications
+		struct array * permutation = new_array(MaxCase+1);
+		int tmp = 0;
+		for(; tmp <= MaxCase; tmp++) {
+			permutation->entries[tmp] = tmp;
+		}
+
 		ForEach(i, Bp, Ep)
 		{
 		    if ( V == 1 ? NotApplic(Case[i], Att) :
 			 (CVal(Case[i], Att) <= Thresh) == (V == 2) )
 		    {
-			Swap(Bp, i);
+			SwapWithImplications(Bp, i);
+
+			// Daniel: Swap entries
+			tmp = permutation->entries[Bp]; 
+			permutation->entries[Bp] = permutation->entries[i];
+			permutation->entries[i] = tmp;
+
 			Bp++;
 		    }
 		}
+
+		// Daniel: Swap and clean up
+	        struct array * inverse_permutation = array_invert(permutation); 
+		struct cmap * renamed_implications = cmap_copy_and_rename(Implications, inverse_permutation);
+		delete_cmap(Implications);
+		Implications = renamed_implications;
+		renamed_implications = NULL;
+		delete_array(permutation);
+		delete_array(inverse_permutation);
+
 		break;
 
 	    case BrSubset:
+
+		assert (false);	
 
 		SS = TestNode->Subset[V];
 		ForEach(i, Bp, Ep)
@@ -1136,6 +1534,8 @@ void FindAllFreq(CaseNo Fp, CaseNo Lp)
 
     for ( a = 0 ; a < NDList ; a++ )
     {
+		//assert (false);
+
 	Att = DList[a];
 	for ( x = MaxClass * (MaxAttVal[Att]+1) - 1 ; x >= 0 ; x-- )
 	{
@@ -1151,8 +1551,31 @@ void FindAllFreq(CaseNo Fp, CaseNo Lp)
 
 	for ( a = 0 ; a < NDList ; a++ )
 	{
+    	    //assert (false);
+
 	    Att = DList[a];
 	    DFreq[Att][ MaxClass * XDVal(Case[i], Att) + (c-1) ] += w;
 	}
     }
 }
+
+
+/* Given a Case number and a value for the class attribute, assigns the class for the given case
+   by the given class value. */
+int assignClass(int caseNo, int classValue)
+{
+
+    assert (0 <= caseNo && caseNo <= MaxCase) ;
+    assert (1 <= classValue && classValue <= MaxClass) ;
+
+    assert (Class(Case[caseNo]) == 0 || Class(Case[caseNo]) == classValue);
+    assert (DVal(Case[caseNo], ClassAtt) == 0 || DVal(Case[caseNo], ClassAtt) == classValue);
+
+    Class(Case[caseNo]) = classValue ;
+    DVal(Case[caseNo], ClassAtt) = classValue ;
+   
+    return 1;
+}
+
+
+
