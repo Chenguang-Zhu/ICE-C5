@@ -1,7 +1,6 @@
 /*************************************************************************/
 /*									 */
 /*  Copyright 2010 Rulequest Research Pty Ltd.				 */
-/*  Author: Ross Quinlan (quinlan@rulequest.com) [Rev Jan 2016]		 */
 /*									 */
 /*  This file is part of C5.0 GPL Edition, a single-threaded version	 */
 /*  of C5.0 release 2.07.						 */
@@ -87,6 +86,7 @@ void SiftRules(float EstErrRate)
 
     if ( SUBSET )
     {
+	assert (false);
 	PruneSubsets();
     }
 
@@ -110,6 +110,7 @@ void SiftRules(float EstErrRate)
 
     if ( ! BranchBits )
     {
+	assert (false);
 	FindTestCodes();
     }
 
@@ -480,7 +481,9 @@ void CoverClass(ClassNo Target)
 	/*  If coverage is not increased, set RuleIn to 2 so that
 	    the rule can be removed later  */
 
-	if ( NewTruePos - NewFalsePos <= MINITEMS + Epsilon )
+	// Pranav: Ensures that all cases are covered
+	if ( NewTruePos - NewFalsePos <= MINITEMS - Epsilon )
+	//if ( NewTruePos - NewFalsePos <= MINITEMS + Epsilon )
 	{
 	    RuleIn[Best] = 2;
 	}
@@ -516,16 +519,18 @@ void CoverClass(ClassNo Target)
 /*	will have about the same error rate as the pruned tree, so	 */
 /*	is approx. the sum of the corresponding messages.		 */
 /*									 */
+/*	Message lengths are returned in units of 0.01			 */
+/*									 */
 /*************************************************************************/
 
 
-double MessageLength(RuleNo NR, double RuleBits, float Errs)
+int MessageLength(RuleNo NR, double RuleBits, float Errs)
 /*  -------------  */
 {
-    return
+    return rint(100.0 *
 	(THEORYFRAC * Max(0, RuleBits - LogFact[NR]) +
 	 Errs * BitsErr + (MaxCase+1 - Errs) * BitsOK +
-	 Errs * LogCaseNo[MaxClass-1]);
+	 Errs * LogCaseNo[MaxClass-1]));
 }
 
 
@@ -547,7 +552,7 @@ void HillClimb()
     int		j;
     CaseCount	Errs;
     double	RuleBits=0;
-    double	LastCost=1E99, CurrentCost, AltCost, NewCost;
+    int		LastCost=1E9, CurrentCost, AltCost, NewCost;
     Boolean	DeleteOnly=false;
 
     ForEach(r, 1, NRules)
