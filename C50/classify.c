@@ -104,7 +104,10 @@ void FindLeaf(DataRec Case, Tree T, Tree PT, float Fraction)
 
 	    /*  Use parent node if effectively no cases at this node  */
 
-	    if ( T->Cases < Epsilon )
+	    // Pranav: Handle the case when the leaf has only data points with UNKNOWN class value.
+	    // 	       Cases = 0 in this case and we want the tre to predict based on the Class value of this node.
+	    //if ( T->Cases < Epsilon )
+	    if ( T->Cases < 0 )
 	    {
 		T = PT;
 	    }
