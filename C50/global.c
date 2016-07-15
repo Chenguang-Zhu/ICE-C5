@@ -32,6 +32,7 @@
 /*************************************************************************/
 
 #include "defns.i"
+#include "cpp_wrapper/cmap.h" // Daniel
 
 /*************************************************************************/
 /*									 */
@@ -83,6 +84,7 @@ int		IValsSize=0,	/* size of above */
 		IValsOffset=0;	/* index of first free char */
 
 int		MaxAtt,		/* max att number */
+		MinAtt = 2, /* Daniel: min att number (assuming that PC is attribute #1) */
 		MaxClass,	/* max class number */
 		MaxDiscrVal=3,	/* max discrete values for any att */
 		MaxLabel=0,	/* max characters in case label */
@@ -111,6 +113,18 @@ DataRec		*Case=0;	/* data cases */
 DataRec		*SaveCase=0;
 
 String		FileStem="undefined";
+
+// Daniel
+struct cmap	* Implications = 0;
+struct array * IntervalsUpperBounds = 0;
+struct array * IntervalsLowerBounds = 0;
+
+#ifdef DEBUG
+struct cmap	* DebugImplications = 0;
+
+DataRec * DebugCase = 0;
+#endif
+
 
 /*************************************************************************/
 /*									 */
