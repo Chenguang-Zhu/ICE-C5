@@ -255,7 +255,10 @@ float TrialTreeCost(Boolean FirstTime)
     memset(Tested, 0, MaxAtt+1);		/* reset tested attributes */
 
     SetMinGainThresh();
-    FormTree(0, Cut, 0, &WTree);
+	// Daniel: Remove this part of code as it conflicts with the modifications    
+	assert(false);
+	exit(1);
+	//FormTree(0, Cut, 0, &WTree);
 
     if ( FirstTime )
     {
