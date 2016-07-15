@@ -542,7 +542,9 @@ Tree Leaf(double *Freq, ClassNo NodeClass, CaseCount Cases, CaseCount Errors)
     Node->ClassDist = AllocZero(MaxClass+1, CaseCount);
     if ( Freq )
     {
-	ForEach(c, 1, MaxClass)
+	// Pranav: Now also including the distribution for the UNKNOWN class.
+	ForEach(c, 0, MaxClass)
+	//ForEach(c, 1, MaxClass)
 	{
 	    Node->ClassDist[c] = Freq[c];
 	}
@@ -623,6 +625,33 @@ int TreeSize(Tree T)
 	}
 
 	return Sum;
+    }
+
+    return ( T->Cases >= MinLeaf ? 1 : 0 );
+}
+
+
+/*************************************************************************/
+/*									 */
+/*	Count the total number of nodes in a tree			 */
+/*									 */
+/*************************************************************************/
+
+
+int TotalTreeSize(Tree T)
+/*  --------  */
+{
+    int		Sum=0;
+    DiscrValue	v;
+
+    if ( T->NodeType )
+    {
+	ForEach(v, ( EmptyNA(T) ? 2 : 1 ), T->Forks)
+	{
+	    Sum += TotalTreeSize(T->Branch[v]);
+	}
+
+	return 1 + Sum;
     }
 
     return ( T->Cases >= MinLeaf ? 1 : 0 );
