@@ -78,7 +78,7 @@ double ComputeGain(double BaseInfo, float UnknFrac, DiscrValue MaxVal,
 /*									 */
 /*************************************************************************/
 
-
+// Return Value = (P+N)*log(P+N) - P*log(P) - N*log(N)
 double TotalInfo(double V[], DiscrValue MinVal, DiscrValue MaxVal)
 /*     ---------  */
 {
@@ -96,6 +96,47 @@ double TotalInfo(double V[], DiscrValue MinVal, DiscrValue MaxVal)
 
     return TotalCases * Log(TotalCases) - Sum;
 }
+
+/*************************************************************************/
+/*									 */
+/*	Compute the information in an Implication Sample 		 */
+/*									 */
+/*************************************************************************/
+
+double ImplicationInfo(double numPositive, double numNegative, double numImplications)
+/*     ---------  */
+{
+    double probabilityPos = 0.0, probabilityNeg = 0.0;
+
+    if (numImplications == 0.0)
+    {
+	probabilityPos = numPositive / ( numPositive + numNegative );
+	probabilityNeg = 1.0 - probabilityPos;
+
+    }
+    else
+    {
+
+    	probabilityPos = ( pow(pow(numPositive + numNegative - numImplications, 2) + 4 * numImplications * numPositive, 0.5)
+				- (numPositive + numNegative - numImplications) ) / ( 2 * numImplications ) ;
+
+    	probabilityNeg = 1.0 - probabilityPos;
+    }
+
+    #if false
+    double a = Log(2);
+    double b = Log(probabilityPos);
+    double c = Log(probabilityNeg);
+    double d = Log(0.5);
+    #endif
+
+    double result1 = (-1 * probabilityPos * Log(probabilityPos));
+    double result2 = (-1 * probabilityNeg * Log(probabilityNeg)) ;
+    double result = (result1 + result2);
+    return result;
+
+}
+
 
 
 
