@@ -286,37 +286,31 @@ namespace Microsoft.Boogie
                 inAtomicSpecification = false;
                 return ret;
             }
-            foreach (int phaseNum in OwickiGries.FindPhaseNums(ensures.Attributes))
+            int phaseNum = QKeyValue.FindIntAttribute(ensures.Attributes, "phase", int.MaxValue);
+            assertionPhaseNums.Add(phaseNum);
+            if (phaseNum > enclosingProcPhaseNum)
             {
-                assertionPhaseNums.Add(phaseNum);
-                if (phaseNum > enclosingProcPhaseNum)
-                {
-                    Error(ensures, "The phase of ensures clause cannot be greater than the phase of enclosing procedure");
-                }
+                Error(ensures, "The phase of ensures clause cannot be greater than the phase of enclosing procedure");
             }
             return ensures;
         }
         public override Requires VisitRequires(Requires requires)
         {
-            foreach (int phaseNum in OwickiGries.FindPhaseNums(requires.Attributes))
+            int phaseNum = QKeyValue.FindIntAttribute(requires.Attributes, "phase", int.MaxValue);
+            assertionPhaseNums.Add(phaseNum); 
+            if (phaseNum > enclosingProcPhaseNum)
             {
-                assertionPhaseNums.Add(phaseNum);
-                if (phaseNum > enclosingProcPhaseNum)
-                {
-                    Error(requires, "The phase of requires clause cannot be greater than the phase of enclosing procedure");
-                }
+                Error(requires, "The phase of requires clause cannot be greater than the phase of enclosing procedure");
             }
             return requires;
         }
         public override Cmd VisitAssertCmd(AssertCmd node)
         {
-            foreach (int phaseNum in OwickiGries.FindPhaseNums(node.Attributes))
+            int phaseNum = QKeyValue.FindIntAttribute(node.Attributes, "phase", int.MaxValue);
+            assertionPhaseNums.Add(phaseNum); 
+            if (phaseNum > enclosingProcPhaseNum)
             {
-                assertionPhaseNums.Add(phaseNum);
-                if (phaseNum > enclosingProcPhaseNum)
-                {
-                    Error(node, "The phase of assert cannot be greater than the phase of enclosing procedure");
-                }
+                Error(node, "The phase of assert cannot be greater than the phase of enclosing procedure");
             }
             return node;
         }
