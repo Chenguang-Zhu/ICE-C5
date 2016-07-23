@@ -94,9 +94,10 @@ namespace Microsoft.Boogie.Z3
           Context z3 = ((Z3apiProverContext)container).z3;
           if (!mapTypes.ContainsKey(mapType)) {
             Type result = mapType.Result;
-            for (int i = mapType.Arguments.Length-1; i > 0; i--) {
+            for (int i = mapType.Arguments.Count-1; i > 0; i--) {
               GetType(result);
-              result = new MapType(mapType.tok, new TypeVariableSeq(), new TypeSeq(mapType.Arguments[i]), result);
+              List<Type> l = new List<Type>(); l.Add(mapType.Arguments[i]);
+              result = new MapType(mapType.tok, new List<TypeVariable>(), l, result);
             }
             mapTypes.Add(mapType, BuildMapType(GetType(mapType.Arguments[0]), GetType(result)));
           }
@@ -189,7 +190,7 @@ namespace Microsoft.Boogie.Z3
 
         public Sort BuildCtorType(CtorType ctorType) {
           Context z3 = ((Z3apiProverContext)container).z3;
-          if (ctorType.Arguments.Length > 0)
+          if (ctorType.Arguments.Count > 0)
             throw new Exception("Type constructor of non-zero arity are not handled");
           return z3.MkSort(ctorType.Decl.Name);
         }
