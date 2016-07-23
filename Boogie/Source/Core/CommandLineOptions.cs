@@ -408,6 +408,8 @@ namespace Microsoft.Boogie {
     public int StagedHoudiniThreads = 2;
     public string VariableDependenceIgnore = null;
     public string AbstractHoudini = null;
+    public string ICEHoudini = null;
+    public string MLHoudini = null;
     public bool UseUnsatCoreForContractInfer = false;
     public bool PrintAssignment = false;
     public int InlineDepth = -1;
@@ -952,6 +954,22 @@ namespace Microsoft.Boogie {
                 if (ps.ConfirmArgumentCount(1))
                 {
                     AbstractHoudini = args[ps.i];
+                }
+                return true;
+            }
+        case "ice":
+            {
+                if (ps.ConfirmArgumentCount(1))
+                {
+                    ICEHoudini = args[ps.i];
+                }
+                return true;
+            }
+        case "mlHoudini":
+            {
+                if (ps.ConfirmArgumentCount(1))
+                {
+                    MLHoudini = args[ps.i];
                 }
                 return true;
             }
