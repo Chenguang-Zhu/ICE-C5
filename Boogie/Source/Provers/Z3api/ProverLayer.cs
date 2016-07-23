@@ -278,7 +278,7 @@ REVERSE_IMPLIES=<bool>    Encode P==>Q as Q||!P.
         private List<Z3ErrorModelAndLabels> z3LabelModels = new List<Z3ErrorModelAndLabels>();
 
         [NoDefaultContract]
-        public override Outcome CheckOutcome(ErrorHandler handler)
+        public override Outcome CheckOutcome(ErrorHandler handler, int taskID = -1)
         {
             if (outcome == Outcome.Invalid)
             {
@@ -291,7 +291,7 @@ REVERSE_IMPLIES=<bool>    Encode P==>Q as Q||!P.
             return outcome;
         }
 
-        public override Outcome CheckOutcomeCore(ErrorHandler handler) {
+        public override Outcome CheckOutcomeCore(ErrorHandler handler, int taskID = -1) {
           if (outcome == Outcome.Invalid) {
             foreach (Z3ErrorModelAndLabels z3LabelModel in z3LabelModels) {
               List<string> unprefixedLabels = RemovePrefixes(z3LabelModel.RelevantLabels);
@@ -322,6 +322,16 @@ REVERSE_IMPLIES=<bool>    Encode P==>Q as Q||!P.
                     throw new Exception("Unknown prefix in label " + label);
             }
             return result;
+        }
+
+        public override void Reset(VCExpressionGenerator gen)
+        {
+            throw new NotImplementedException();
+        }
+
+        public override void FullReset(VCExpressionGenerator gen)
+        {
+            throw new NotImplementedException();
         }
     }
 }
