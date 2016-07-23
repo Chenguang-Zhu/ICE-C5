@@ -500,7 +500,7 @@ namespace Microsoft.Boogie
         Inline(program);
 
         var stats = new PipelineStatistics();
-        oc = InferAndVerify(program, stats);
+        oc = InferAndVerify(program, stats, fileNames.ElementAt(0));
         switch (oc)
         {
           case PipelineOutcome.Done:
@@ -761,7 +761,7 @@ namespace Microsoft.Boogie
     ///    parameters contain meaningful values
     /// </summary>
     public static PipelineOutcome InferAndVerify(Program program,
-                                                 PipelineStatistics stats,
+                                                 PipelineStatistics stats, string filename,
                                                  ErrorReporterDelegate er = null, string requestId = "unknown")
     {
       Contract.Requires(program != null);
@@ -823,7 +823,7 @@ namespace Microsoft.Boogie
       #region Run Houdini and verify
       if (CommandLineOptions.Clo.ContractInfer)
       {
-        return RunHoudini(program, stats, er);
+        return RunHoudini(program, stats, er, filename);
       }
       #endregion
 
@@ -1148,13 +1148,24 @@ namespace Microsoft.Boogie
 
     #region Houdini
 
-    private static PipelineOutcome RunHoudini(Program program, PipelineStatistics stats, ErrorReporterDelegate er)
+    private static PipelineOutcome RunHoudini(Program program, PipelineStatistics stats, ErrorReporterDelegate er, string filename)
     {
       Contract.Requires(stats != null);
 
       if (CommandLineOptions.Clo.AbstractHoudini != null)
       {
         return RunAbstractHoudini(program, stats, er);
+      }
+      
+      if (CommandLineOptions.Clo.ICEHoudini != null)
+      {
+          return RunICEHoudini(program, stats, er, filename);
+      }
+
+      if (CommandLineOptions.Clo.MLHoudini != null)
+      {
+          //Console.WriteLine("Running ML Houdini");
+          return RunMLHoudini(program, stats, er, filename);
       }
 
       if (CommandLineOptions.Clo.StagedHoudini != null)
@@ -1259,27 +1270,67 @@ namespace Microsoft.Boogie
 
     private static PipelineOutcome RunAbstractHoudini(Program program, PipelineStatistics stats, ErrorReporterDelegate er)
     {
-      Contract.Requires(stats != null);
+        Contract.Requires(stats != null);
 
-      //CommandLineOptions.Clo.PrintErrorModel = 1;
-      CommandLineOptions.Clo.UseProverEvaluate = true;
-      CommandLineOptions.Clo.ModelViewFile = "z3model";
-      CommandLineOptions.Clo.UseArrayTheory = true;
-      CommandLineOptions.Clo.TypeEncodingMethod = CommandLineOptions.TypeEncoding.Monomorphic;
-      Houdini.AbstractDomainFactory.Initialize(program);
-      var domain = Houdini.AbstractDomainFactory.GetInstance(CommandLineOptions.Clo.AbstractHoudini);
+        //CommandLineOptions.Clo.PrintErrorModel = 1;
+        CommandLineOptions.Clo.UseProverEvaluate = true;
+        CommandLineOptions.Clo.ModelViewFile = "z3model";
+        CommandLineOptions.Clo.UseArrayTheory = true;
+        CommandLineOptions.Clo.TypeEncodingMethod = CommandLineOptions.TypeEncoding.Monomorphic;
+        Houdini.AbstractDomainFactory.Initialize(program);
+        var domain = Houdini.AbstractDomainFactory.GetInstance(CommandLineOptions.Clo.AbstractHoudini);
 
-      // Run Abstract Houdini
-      var abs = new Houdini.AbsHoudini(program, domain);
-      var absout = abs.ComputeSummaries();
-      ProcessOutcome(absout.outcome, absout.errors, "", stats, Console.Out, CommandLineOptions.Clo.ProverKillTime, er);
-      ProcessErrors(absout.errors, absout.outcome, Console.Out, er);
+        // Run Abstract Houdini
+        var abs = new Houdini.AbsHoudini(program, domain);
+        var absout = abs.ComputeSummaries();
+        ProcessOutcome(absout.outcome, absout.errors, "", stats, Console.Out, CommandLineOptions.Clo.ProverKillTime, er);
+        ProcessErrors(absout.errors, absout.outcome, Console.Out, er);
 
-      //Houdini.PredicateAbs.Initialize(program);
-      //var abs = new Houdini.AbstractHoudini(program);
-      //abs.computeSummaries(new Houdini.PredicateAbs(program.TopLevelDeclarations.OfType<Implementation>().First().Name));
+        //Houdini.PredicateAbs.Initialize(program);
+        //var abs = new Houdini.AbstractHoudini(program);
+        //abs.computeSummaries(new Houdini.PredicateAbs(program.TopLevelDeclarations.OfType<Implementation>().First().Name));
 
-      return PipelineOutcome.Done;
+        return PipelineOutcome.Done;
+    }
+
+    
+    private static PipelineOutcome RunICEHoudini(Program program, PipelineStatistics stats, ErrorReporterDelegate er, string filename)
+    {
+        Contract.Requires(stats != null);
+
+        //CommandLineOptions.Clo.PrintErrorModel = 1;
+        CommandLineOptions.Clo.UseProverEvaluate = true;
+        CommandLineOptions.Clo.ModelViewFile = "z3model";
+        CommandLineOptions.Clo.UseArrayTheory = true;
+        CommandLineOptions.Clo.TypeEncodingMethod = CommandLineOptions.TypeEncoding.Monomorphic;
+        
+        // Run Abstract Houdini
+        var ice = new Houdini.ICEHoudini(program, CommandLineOptions.Clo.ICEHoudini, filename);
+        var iceout = ice.ComputeSummaries();
+        ProcessOutcome(iceout.outcome, iceout.errors, "", stats, Console.Out, CommandLineOptions.Clo.ProverKillTime, er);
+        ProcessErrors(iceout.errors, iceout.outcome, Console.Out, er);
+
+        return PipelineOutcome.Done;
+    }
+    
+    
+    private static PipelineOutcome RunMLHoudini(Program program, PipelineStatistics stats, ErrorReporterDelegate er, string filename)
+    {
+        Contract.Requires(stats != null);
+
+        //CommandLineOptions.Clo.PrintErrorModel = 1;
+        CommandLineOptions.Clo.UseProverEvaluate = true;
+        CommandLineOptions.Clo.ModelViewFile = "z3model";
+        CommandLineOptions.Clo.UseArrayTheory = true;
+        CommandLineOptions.Clo.TypeEncodingMethod = CommandLineOptions.TypeEncoding.Monomorphic;
+
+        // Run Abstract Houdini
+        var mlice = new Houdini.MLHoudini(program, CommandLineOptions.Clo.MLHoudini, filename);
+        var mliceout = mlice.ComputeSummaries();
+        ProcessOutcome(mliceout.outcome, mliceout.errors, "", stats, Console.Out, CommandLineOptions.Clo.ProverKillTime, er);
+        ProcessErrors(mliceout.errors, mliceout.outcome, Console.Out, er);
+       
+        return PipelineOutcome.Done;
     }
 
     #endregion
