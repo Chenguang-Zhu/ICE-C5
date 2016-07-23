@@ -72,6 +72,7 @@ namespace Microsoft.Boogie {
       Contract.Invariant(Context != null);
       Contract.Invariant(cce.NonNullElements(relatedInformation));
       Contract.Invariant(cce.NonNullDictionaryAndValues(calleeCounterexamples));
+      Contract.Invariant(AssumedCmds != null);
     }
 
     [Peer]
@@ -85,6 +86,10 @@ namespace Microsoft.Boogie {
 
     public Dictionary<TraceLocation, CalleeCounterexampleInfo> calleeCounterexamples;
 
+    // New data member added to account for assume cmds encountered along the Trace.
+    [Peer]
+    public List<Cmd> AssumedCmds;
+
     internal Counterexample(List<Block> trace, Model model, VC.ModelViewInfo mvInfo, ProverContext context) {
       Contract.Requires(trace != null);
       Contract.Requires(context != null);
@@ -94,6 +99,20 @@ namespace Microsoft.Boogie {
       this.Context = context;
       this.relatedInformation = new List<string>();
       this.calleeCounterexamples = new Dictionary<TraceLocation, CalleeCounterexampleInfo>();
+      this.AssumedCmds = new List<Cmd>();
+    }
+
+    internal Counterexample(List<Block> trace, List<Cmd> assumedCmds, Model model, VC.ModelViewInfo mvInfo, ProverContext context)
+    {
+        Contract.Requires(trace != null);
+        Contract.Requires(context != null);
+        this.Trace = trace;
+        this.Model = model;
+        this.MvInfo = mvInfo;
+        this.Context = context;
+        this.relatedInformation = new List<string>();
+        this.calleeCounterexamples = new Dictionary<TraceLocation, CalleeCounterexampleInfo>();
+        this.AssumedCmds = assumedCmds;
     }
 
     // Create a shallow copy of the counterexample
@@ -382,7 +401,6 @@ namespace Microsoft.Boogie {
       Contract.Invariant(FailingAssert != null);
     }
 
-
     public AssertCounterexample(List<Block> trace, AssertCmd failingAssert, Model model, VC.ModelViewInfo mvInfo, ProverContext context)
       : base(trace, model, mvInfo, context) {
       Contract.Requires(trace != null);
@@ -391,13 +409,23 @@ namespace Microsoft.Boogie {
       this.FailingAssert = failingAssert;
     }
 
+    public AssertCounterexample(List<Block> trace, List<Cmd> assumedCmds, AssertCmd failingAssert, Model model, VC.ModelViewInfo mvInfo, ProverContext context)
+        : base(trace, assumedCmds, model, mvInfo, context)
+    {
+        Contract.Requires(trace != null);
+        Contract.Requires(assumedCmds != null);
+        Contract.Requires(failingAssert != null);
+        Contract.Requires(context != null);
+        this.FailingAssert = failingAssert;
+    }
+
     public override int GetLocation() {
       return FailingAssert.tok.line * 1000 + FailingAssert.tok.col;
     }
 
     public override Counterexample Clone()
     {
-        var ret = new AssertCounterexample(Trace, FailingAssert, Model, MvInfo, Context);
+        var ret = new AssertCounterexample(Trace, AssumedCmds, FailingAssert, Model, MvInfo, Context);
         ret.calleeCounterexamples = calleeCounterexamples;
         return ret;
     }
@@ -424,13 +452,26 @@ namespace Microsoft.Boogie {
       this.FailingRequires = failingRequires;
     }
 
+    public CallCounterexample(List<Block> trace, List<Cmd> assumedCmds, CallCmd failingCall, Requires failingRequires, Model model, VC.ModelViewInfo mvInfo, ProverContext context)
+        : base(trace, assumedCmds, model, mvInfo, context)
+    {
+        Contract.Requires(!failingRequires.Free);
+        Contract.Requires(trace != null);
+        Contract.Requires(assumedCmds != null);
+        Contract.Requires(context != null);
+        Contract.Requires(failingCall != null);
+        Contract.Requires(failingRequires != null);
+        this.FailingCall = failingCall;
+        this.FailingRequires = failingRequires;
+    }
+
     public override int GetLocation() {
       return FailingCall.tok.line * 1000 + FailingCall.tok.col;
     }
 
     public override Counterexample Clone()
     {
-        var ret = new CallCounterexample(Trace, FailingCall, FailingRequires, Model, MvInfo, Context);
+        var ret = new CallCounterexample(Trace, AssumedCmds, FailingCall, FailingRequires, Model, MvInfo, Context);
         ret.calleeCounterexamples = calleeCounterexamples;
         return ret;
     }
@@ -457,13 +498,26 @@ namespace Microsoft.Boogie {
       this.FailingEnsures = failingEnsures;
     }
 
+    public ReturnCounterexample(List<Block> trace, List<Cmd> assumedCmds, TransferCmd failingReturn, Ensures failingEnsures, Model model, VC.ModelViewInfo mvInfo, ProverContext context)
+        : base(trace, assumedCmds, model, mvInfo, context)
+    {
+        Contract.Requires(trace != null);
+        Contract.Requires(assumedCmds != null);
+        Contract.Requires(context != null);
+        Contract.Requires(failingReturn != null);
+        Contract.Requires(failingEnsures != null);
+        Contract.Requires(!failingEnsures.Free);
+        this.FailingReturn = failingReturn;
+        this.FailingEnsures = failingEnsures;
+    }
+
     public override int GetLocation() {
       return FailingReturn.tok.line * 1000 + FailingReturn.tok.col;
     }
 
     public override Counterexample Clone()
     {
-        var ret = new ReturnCounterexample(Trace, FailingReturn, FailingEnsures, Model, MvInfo, Context);
+        var ret = new ReturnCounterexample(Trace, AssumedCmds, FailingReturn, FailingEnsures, Model, MvInfo, Context);
         ret.calleeCounterexamples = calleeCounterexamples;
         return ret;
     }
