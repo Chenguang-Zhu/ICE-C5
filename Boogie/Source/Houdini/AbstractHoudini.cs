@@ -11,7 +11,8 @@ using System.Diagnostics;
 using System.Diagnostics.Contracts;
 using Microsoft.Boogie.GraphUtil;
 
-namespace Microsoft.Boogie.Houdini {
+namespace Microsoft.Boogie.Houdini
+{
 
     public class AbsHoudini
     {
@@ -81,17 +82,17 @@ namespace Microsoft.Boogie.Houdini {
 
             // type check
             existentialFunctions.Values.Iter(func =>
-                {
-                    if (func.OutParams.Count != 1 || !func.OutParams[0].TypedIdent.Type.IsBool)
-                        throw new AbsHoudiniInternalError(string.Format("Existential function {0} must return bool", func.Name));
-                    if(func.Body != null)
-                        throw new AbsHoudiniInternalError(string.Format("Existential function {0} should not have a body", func.Name));
-                    var args = new List<Type>();
-                    func.InParams.Iter(v => args.Add(v.TypedIdent.Type));
-                    string msg = "";
-                    if (!function2Value[func.Name].TypeCheck(args, out msg))
-                        throw new AbsHoudiniInternalError("TypeError: " + msg);
-                });
+            {
+                if (func.OutParams.Count != 1 || !func.OutParams[0].TypedIdent.Type.IsBool)
+                    throw new AbsHoudiniInternalError(string.Format("Existential function {0} must return bool", func.Name));
+                if (func.Body != null)
+                    throw new AbsHoudiniInternalError(string.Format("Existential function {0} should not have a body", func.Name));
+                var args = new List<Type>();
+                func.InParams.Iter(v => args.Add(v.TypedIdent.Type));
+                string msg = "";
+                if (!function2Value[func.Name].TypeCheck(args, out msg))
+                    throw new AbsHoudiniInternalError("TypeError: " + msg);
+            });
 
             //if (CommandLineOptions.Clo.ProverKillTime > 0)
             //    CommandLineOptions.Clo.ProverOptions.Add(string.Format("TIME_LIMIT={0}", CommandLineOptions.Clo.ProverKillTime));
@@ -99,7 +100,7 @@ namespace Microsoft.Boogie.Houdini {
             Inline();
 
             this.vcgen = new VCGen(program, CommandLineOptions.Clo.SimplifyLogFilePath, CommandLineOptions.Clo.SimplifyLogFileAppend, new List<Checker>());
-            this.prover = ProverInterface.CreateProver(program, CommandLineOptions.Clo.SimplifyLogFilePath, CommandLineOptions.Clo.SimplifyLogFileAppend, CommandLineOptions.Clo.ProverKillTime);
+            this.prover = ProverInterface.CreateProver(program, CommandLineOptions.Clo.SimplifyLogFilePath, CommandLineOptions.Clo.SimplifyLogFileAppend, -1);
 
             this.proverTime = TimeSpan.Zero;
             this.numProverQueries = 0;
@@ -122,21 +123,22 @@ namespace Microsoft.Boogie.Houdini {
             name2Impl.Keys.Iter(s => Succ[s] = new HashSet<string>());
             name2Impl.Keys.Iter(s => Pred[s] = new HashSet<string>());
 
-            foreach(var impl in name2Impl.Keys) {
+            foreach (var impl in name2Impl.Keys)
+            {
                 Succ[impl] = new HashSet<string>();
-                impl2functionsAsserted[impl].Iter(f => 
+                impl2functionsAsserted[impl].Iter(f =>
                     function2implAssumed[f].Iter(succ =>
-                        {
-                            Succ[impl].Add(succ);
-                            Pred[succ].Add(impl);
-                        }));
+                    {
+                        Succ[impl].Add(succ);
+                        Pred[succ].Add(impl);
+                    }));
             }
 
             var sccs = new StronglyConnectedComponents<string>(name2Impl.Keys,
                 new Adjacency<string>(n => Pred[n]),
                 new Adjacency<string>(n => Succ[n]));
             sccs.Compute();
-            
+
             // impl -> priority
             var impl2Priority = new Dictionary<string, int>();
             int p = 0;
@@ -158,14 +160,15 @@ namespace Microsoft.Boogie.Houdini {
                 worklist.Remove(worklist.First());
 
                 var gen = prover.VCExprGen;
-                var terms = new List<Expr>();
+                Expr env = Expr.True;
+
                 foreach (var tup in impl2FuncCalls[impl])
                 {
                     var controlVar = tup.Item2;
                     var exprVars = tup.Item3;
                     var varList = new List<Expr>();
                     exprVars.Args.OfType<Expr>().Iter(v => varList.Add(v));
-                    
+
                     var args = new List<Expr>();
                     controlVar.InParams.Iter(v => args.Add(Expr.Ident(v)));
                     Expr term = Expr.Eq(new NAryExpr(Token.NoToken, new FunctionCall(controlVar), args),
@@ -177,9 +180,9 @@ namespace Microsoft.Boogie.Houdini {
                             new Trigger(Token.NoToken, true, new List<Expr> { new NAryExpr(Token.NoToken, new FunctionCall(controlVar), args) }),
                             term);
                     }
-                    terms.Add(term);
+
+                    env = Expr.And(env, term);
                 }
-                var env = BinaryTreeAnd(terms, 0, terms.Count - 1);
 
                 env.Typecheck(new TypecheckingContext((IErrorSink)null));
                 var envVC = prover.Context.BoogieExprTranslator.Translate(env);
@@ -218,17 +221,7 @@ namespace Microsoft.Boogie.Houdini {
                     Console.WriteLine("Time taken = " + inc.TotalSeconds.ToString());
 
                 if (proverOutcome == ProverInterface.Outcome.TimeOut || proverOutcome == ProverInterface.Outcome.OutOfMemory)
-                {
-                    // pick some function; make it true and keep going
-                    bool changed = false;
-                    foreach (var f in impl2functionsAsserted[impl])
-                    {
-                        function2Value[f] = function2Value[f].MakeTop(out changed);
-                        if (changed) break;
-                    }
-                    if(!changed)
-                        return new VCGenOutcome(proverOutcome, new List<Counterexample>());
-                }
+                    return new VCGenOutcome(proverOutcome, new List<Counterexample>());
 
                 if (CommandLineOptions.Clo.Trace)
                     Console.WriteLine(collector.numErrors > 0 ? "SAT" : "UNSAT");
@@ -266,18 +259,6 @@ namespace Microsoft.Boogie.Houdini {
             }
 
             return overallOutcome;
-        }
-
-        private static Expr BinaryTreeAnd(List<Expr> terms, int start, int end)
-        {
-            if (start > end)
-                return Expr.True;
-            if (start == end)
-                return terms[start];
-            if (start + 1 == end)
-                return Expr.And(terms[start], terms[start + 1]);
-            var mid = (start + end) / 2;
-            return Expr.And(BinaryTreeAnd(terms, start, mid), BinaryTreeAnd(terms, mid + 1, end));
         }
 
         public IEnumerable<Function> GetAssignment()
@@ -540,7 +521,7 @@ namespace Microsoft.Boogie.Houdini {
                     var collector = new VariableCollector();
                     collector.Visit(node);
 
-                    if(existentialExpr != null && existentialExpr.Dummies.Intersect(collector.usedVars).Any())
+                    if (existentialExpr != null && existentialExpr.Dummies.Intersect(collector.usedVars).Any())
                         functionsUsed.Add(Tuple.Create((node.Fun as FunctionCall).Func, existentialExpr));
                     else
                         functionsUsed.Add(Tuple.Create<Function, ExistsExpr>((node.Fun as FunctionCall).Func, null));
@@ -597,9 +578,6 @@ namespace Microsoft.Boogie.Houdini {
 
             vcgen.ConvertCFG2DAG(impl);
             var gotoCmdOrigins = vcgen.PassifyImpl(impl, out mvInfo);
-
-            // Inline functions
-            (new InlineFunctionCalls()).VisitBlockList(impl.Blocks);
 
             ExtractQuantifiedExprs(impl);
             StripOutermostForall(impl);
@@ -811,48 +789,6 @@ namespace Microsoft.Boogie.Houdini {
 
     }
 
-    class InlineFunctionCalls : StandardVisitor
-    {
-        public Stack<string> inlinedFunctionsStack;
-
-        public InlineFunctionCalls()
-        {
-            inlinedFunctionsStack = new Stack<string>();
-        }
-
-        public override Expr VisitNAryExpr(NAryExpr node)
-        {
-            var fc = node.Fun as FunctionCall;
-            if (fc != null && fc.Func.Body != null && QKeyValue.FindBoolAttribute(fc.Func.Attributes, "inline"))
-            {
-                if (inlinedFunctionsStack.Contains(fc.Func.Name))
-                {
-                    // recursion detected
-                    throw new AbsHoudiniInternalError("Recursion detected in function declarations");
-                }
-
-                // create a substitution
-                var subst = new Dictionary<Variable, Expr>();
-                for (int i = 0; i < node.Args.Count; i++)
-                {
-                    subst.Add(fc.Func.InParams[i], node.Args[i]);
-                }
-
-                var e =
-                    Substituter.Apply(new Substitution(v => subst.ContainsKey(v) ? subst[v] : Expr.Ident(v)), fc.Func.Body);
-
-                inlinedFunctionsStack.Push(fc.Func.Name);
-
-                e = base.VisitExpr(e);
-
-                inlinedFunctionsStack.Pop();
-
-                return e;
-            }
-            return base.VisitNAryExpr(node);
-        }
-    }
-
     class ReplaceFunctionCalls : StandardVisitor
     {
         public List<Tuple<string, Function, NAryExpr>> functionsUsed;
@@ -928,7 +864,7 @@ namespace Microsoft.Boogie.Houdini {
             var inF = inFunction;
 
             if (node.Fun is FunctionCall && functionsToReplace.Contains((node.Fun as FunctionCall).FunctionName))
-            {                
+            {
                 found((node.Fun as FunctionCall).FunctionName);
                 inFunction = true;
 
@@ -938,14 +874,14 @@ namespace Microsoft.Boogie.Houdini {
 
                 // Find the outermost bound variables
                 var bound = new List<Variable>();
-                if(boundVars.Count > 0) 
+                if (boundVars.Count > 0)
                     bound.AddRange(collector.usedVars.Intersect(boundVars[0].Values));
 
                 // create boolean function to replace this guy
                 var constant = new Function(Token.NoToken, "AbsHoudiniConstant" + IdCounter, bound,
                     new Formal(Token.NoToken, new TypedIdent(Token.NoToken, "r", Microsoft.Boogie.Type.Bool), false));
                 IdCounter++;
-                
+
                 functionsUsed.Add(Tuple.Create((node.Fun as FunctionCall).FunctionName, constant, node));
                 boolConstants.Add(constant);
 
@@ -1047,7 +983,7 @@ namespace Microsoft.Boogie.Houdini {
 
                 newConstants.Add(constant, node);
 
-                return Expr.Ident(constant);                
+                return Expr.Ident(constant);
             }
 
             return node;
@@ -1060,9 +996,9 @@ namespace Microsoft.Boogie.Houdini {
     class StripQuantifiers : StandardVisitor
     {
         static int boundVarCounter = 0;
-        
+
         // 0 -> None, 1 -> Forall, 2 -> Exists, 3 -> Nested
-        int insideQuantifier; 
+        int insideQuantifier;
 
         bool searchExistentialFunction;
         bool foundExistentialFunction;
@@ -1081,7 +1017,7 @@ namespace Microsoft.Boogie.Houdini {
             subst = null;
         }
 
-        public static Tuple<Expr,List<LocalVariable>> Run(Expr expr, HashSet<string> existentialFunctions)
+        public static Tuple<Expr, List<LocalVariable>> Run(Expr expr, HashSet<string> existentialFunctions)
         {
             // check for type errors first
             var sq = new StripQuantifiers(existentialFunctions);
@@ -1216,17 +1152,6 @@ namespace Microsoft.Boogie.Houdini {
             return new Intervals();
         }
 
-        public IAbstractDomain MakeTop(out bool changed)
-        {
-            if (lower == Int32.MinValue && upper == Int32.MaxValue)
-            {
-                changed = false;
-                return this;
-            }
-            changed = true;
-            return new Intervals(Int32.MinValue, Int32.MaxValue, 0);
-        }
-
         public IAbstractDomain Join(List<Model.Element> states)
         {
             Debug.Assert(states.Count == 1);
@@ -1240,7 +1165,7 @@ namespace Microsoft.Boogie.Houdini {
                 return new Intervals(intval, intval, 1);
             }
 
-            if(intval >= lower && intval <= upper)
+            if (intval >= lower && intval <= upper)
                 return this;
 
             if (nJoin > maxJoin)
@@ -1248,7 +1173,7 @@ namespace Microsoft.Boogie.Houdini {
                 // widen
                 if (intval > upper)
                     return new Intervals(lower, Int32.MaxValue, 1);
-                if(intval < lower)
+                if (intval < lower)
                     return new Intervals(Int32.MinValue, upper, 1);
 
                 Debug.Assert(false);
@@ -1310,7 +1235,7 @@ namespace Microsoft.Boogie.Houdini {
                 if (e1 == Expr.False) return e2;
                 if (e2 == Expr.False) return e1;
                 if (e1 == Expr.True || e2 == Expr.True) return Expr.True;
-                return Expr.Or(e1, e2); 
+                return Expr.Or(e1, e2);
             }
         }
 
@@ -1390,19 +1315,6 @@ namespace Microsoft.Boogie.Houdini {
         public IAbstractDomain Bottom()
         {
             return new PredicateAbsElem();
-        }
-
-        public IAbstractDomain MakeTop(out bool changed)
-        {
-            if (conjuncts.Count == 0)
-            {
-                changed = false;
-                return this;
-            }
-            changed = true;
-            var ret = new PredicateAbsElem();
-            ret.isFalse = false;
-            return ret;
         }
 
         public IAbstractDomain Join(List<Model.Element> state)
@@ -1503,14 +1415,6 @@ namespace Microsoft.Boogie.Houdini {
             return GetBottom();
         }
 
-        public IAbstractDomain MakeTop(out bool changed)
-        {
-            changed = false;
-            if (isTop) return this;
-            changed = true;
-            return GetTop();
-        }
-
         public IAbstractDomain Join(List<Model.Element> states)
         {
             Debug.Assert(states.Count == 1);
@@ -1579,17 +1483,6 @@ namespace Microsoft.Boogie.Houdini {
             return new PowDomain(Val.FALSE) as IAbstractDomain;
         }
 
-        public IAbstractDomain MakeTop(out bool changed)
-        {
-            if (isTop)
-            {
-                changed = false;
-                return this;
-            }
-            changed = true;
-            return new PowDomain(Val.TRUE);
-        }
-
         IAbstractDomain IAbstractDomain.Bottom()
         {
             return GetBottom();
@@ -1598,7 +1491,7 @@ namespace Microsoft.Boogie.Houdini {
         IAbstractDomain IAbstractDomain.Join(List<Model.Element> state)
         {
             if (isTop) return this;
-            
+
             int v = 0;
             if (state[0] is Model.BitVector)
                 v = (state[0] as Model.BitVector).AsInt();
@@ -1629,7 +1522,7 @@ namespace Microsoft.Boogie.Houdini {
             }
             else
             {
-                return Expr.Lt(v, Expr.Literal(1 << (upper+1)));
+                return Expr.Lt(v, Expr.Literal(1 << (upper + 1)));
             }
         }
 
@@ -1672,17 +1565,6 @@ namespace Microsoft.Boogie.Houdini {
             return GetBottom();
         }
 
-        public IAbstractDomain MakeTop(out bool changed)
-        {
-            if (equalities.Count == 0)
-            {
-                changed = false;
-                return this;
-            }
-            changed = true;
-            return new EqualitiesDomain(false, new List<HashSet<int>>());
-        }
-
         IAbstractDomain IAbstractDomain.Join(List<Model.Element> state)
         {
             // find the guys that are equal
@@ -1702,7 +1584,7 @@ namespace Microsoft.Boogie.Houdini {
                 }
                 if (!added) eq.Add(new HashSet<int>(new int[] { i }));
             }
-            
+
             if (isBottom)
             {
                 return new EqualitiesDomain(false, eq);
@@ -1778,7 +1660,7 @@ namespace Microsoft.Boogie.Houdini {
     // foo(a,b) \in {false, \not a, a ==> b, true}
     public class ImplicationDomain : IAbstractDomain
     {
-        enum Val {FALSE, NOT_A, A_IMP_B, TRUE};
+        enum Val { FALSE, NOT_A, A_IMP_B, TRUE };
         Val val;
 
         private ImplicationDomain(Val val)
@@ -1794,16 +1676,6 @@ namespace Microsoft.Boogie.Houdini {
         public IAbstractDomain Bottom()
         {
             return GetBottom();
-        }
-
-        public IAbstractDomain MakeTop(out bool changed)
-        {
-            if(val == Val.TRUE) {
-                changed = false;
-                return this;
-            }
-            changed = true;
-            return new ImplicationDomain(Val.TRUE);
         }
 
         public IAbstractDomain Join(List<Model.Element> states)
@@ -1890,16 +1762,6 @@ namespace Microsoft.Boogie.Houdini {
             return new ConstantProp(null, false, true);
         }
 
-        public IAbstractDomain MakeTop(out bool changed) {
-            if (isTop)
-            {
-                changed = false;
-                return this;
-            }
-            changed = true;
-            return GetTop();
-        }
-
         private ConstantProp Join(ConstantProp that)
         {
             if (isBottom) return that;
@@ -1981,11 +1843,316 @@ namespace Microsoft.Boogie.Houdini {
                 msg = "Illegal number of arguments, expecting 1";
                 return false;
             }
-            if (!argTypes[0].IsInt && ! argTypes[0].IsBool)
+            if (!argTypes[0].IsInt && !argTypes[0].IsBool)
             {
                 msg = "Illegal type, expecting int or bool";
                 return false;
             }
+            return true;
+        }
+    }
+
+    public class Pentagon : IAbstractDomain
+    {
+
+        // symbolic strict inequalities of the form x < y.
+        List<HashSet<int>> symbolic;
+        IndependentAttribute<Intervals> intervals;
+        bool isBottom;
+
+        public Pentagon(bool isBottom, List<HashSet<int>> symb, IndependentAttribute<Intervals> intv)
+        {
+            this.isBottom = isBottom;
+            this.symbolic = symb;
+            this.intervals = intv;
+        }
+
+        public static Pentagon GetBottom()
+        {
+            return new Pentagon(true, new List<HashSet<int>>(), new IndependentAttribute<Intervals>());
+        }
+
+        public IAbstractDomain Bottom()
+        {
+            return GetBottom();
+        }
+
+        public IAbstractDomain Join(List<Model.Element> states)
+        {
+            IndependentAttribute<Intervals> ret_intv;
+            List<HashSet<int>> ret_symb;
+
+            if (isBottom)
+            {
+                var intv = new IndependentAttribute<Intervals>();
+                ret_intv = intv.Join(states) as IndependentAttribute<Intervals>;
+                ret_symb = new List<HashSet<int>>();
+                for (var i = 0; i < states.Count; i++)
+                {
+                    var hs = new HashSet<int>();
+
+                    var statei = states[i] as Model.Integer;
+                    if (statei == null)
+                        throw new AbsHoudiniInternalError("Incorrect type, expected int");
+                    var intvali = statei.AsInt();
+
+                    for (var j = 0; j < states.Count; j++)
+                    {
+                        var statej = states[j] as Model.Integer;
+                        if (statej == null)
+                            throw new AbsHoudiniInternalError("Incorrect type, expected int");
+                        var intvalj = statej.AsInt();
+
+                        if (intvali < intvalj)
+                        {
+                            hs.Add(j);
+                        }
+                    }
+                    ret_symb.Add(hs);
+                }
+                return new Pentagon(false, ret_symb, ret_intv);
+            }
+
+            // The domain element is not Bottom.
+            ret_intv = intervals.Join(states) as IndependentAttribute<Intervals>;
+            ret_symb = new List<HashSet<int>>();
+            Debug.Assert(states.Count == symbolic.Count);
+            for (var i = 0; i < symbolic.Count; i++)
+            {
+                var hs = new HashSet<int>();
+
+                var statei = states[i] as Model.Integer;
+                if (statei == null)
+                    throw new AbsHoudiniInternalError("Incorrect type, expected int");
+                var intvali = statei.AsInt();
+
+                foreach (var j in symbolic[i])
+                {
+                    var statej = states[j] as Model.Integer;
+                    if (statej == null)
+                        throw new AbsHoudiniInternalError("Incorrect type, expected int");
+                    var intvalj = statej.AsInt();
+
+                    if (intvali < intvalj)
+                    {
+                        hs.Add(j);
+                    }
+                }
+                ret_symb.Add(hs);
+            }
+            return new Pentagon(false, ret_symb, ret_intv);
+
+        }
+
+        public Expr Gamma(List<Expr> vars)
+        {
+            if (isBottom) return Expr.False;
+            if (symbolic.Count != vars.Count)
+                throw new AbsHoudiniInternalError(
+                    string.Format("Got illegal number of arguments ({0}), expected {1}", vars.Count, symbolic.Count));
+
+            Expr ret = Expr.True;
+            ret = Expr.And(ret, intervals.Gamma(vars));
+            for (int i = 0; i < symbolic.Count; i++)
+            {
+                foreach (var j in symbolic[i])
+                {
+                    ret = Expr.And(ret, Expr.Lt(vars[i], vars[j]));
+                }
+            }
+            return ret;
+        }
+
+        public bool TypeCheck(List<Type> argTypes, out string msg)
+        {
+            msg = "";
+            if (!intervals.TypeCheck(argTypes, out msg))
+            {
+                return false;
+            }
+            if (!isBottom && symbolic.Count != argTypes.Count)
+            {
+                msg = "Illegal number of arguments";
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    public class Octagon : IAbstractDomain
+    {
+
+        // symbolic strict inequalities of the form x < y.
+        IndependentAttribute<Intervals> intervals;
+        List<Tuple<int,int>> octagons;
+        List<int> octagons_njoins;
+        readonly static int maxJoin = 5;
+
+        bool isBottom;
+
+        public Octagon(bool isBottom, IndependentAttribute<Intervals> intv, List<Tuple<int,int>> oct, List<int> oct_njoins)
+        {
+            this.intervals = intv;
+            this.isBottom = isBottom;
+            this.octagons = oct;
+            this.octagons_njoins = oct_njoins;            
+        }
+
+        public static Octagon GetBottom()
+        {
+            return new Octagon(true, new IndependentAttribute<Intervals>(), new List<Tuple<int,int>>(), new List<int>());
+        }
+
+        public IAbstractDomain Bottom()
+        {
+            return GetBottom();
+        }
+
+        public IAbstractDomain Join(List<Model.Element> states)
+        {
+            IndependentAttribute<Intervals> ret_intv;
+            List<Tuple<int, int>> ret_oct = new List<Tuple<int, int>>();
+            List<int> ret_oct_njoins = new List<int>();
+
+            List<Tuple<int,int>> states_oct = new List<Tuple<int,int>>();
+            List<int> states_oct_njoins = new List<int>();
+            for (int i = 0; i < states.Count; i++)
+            {
+                var statei = states[i] as Model.Integer;
+                if (statei == null)
+                    throw new AbsHoudiniInternalError("Incorrect type, expected int");
+                var intvali = statei.AsInt();
+
+                for (int j = i + 1; j < states.Count; j++)
+                {
+                    var statej = states[j] as Model.Integer;
+                    if (statej == null)
+                        throw new AbsHoudiniInternalError("Incorrect type, expected int");
+                    var intvalj = statej.AsInt();
+
+                    // x-y, x+y, x-z, x+z, y-z, y+z
+
+                    states_oct.Add(new Tuple<int, int>(intvali - intvalj, intvali - intvalj));
+                    states_oct_njoins.Add(0);
+
+                    states_oct.Add(new Tuple<int, int>(intvali + intvalj, intvali + intvalj));
+                    states_oct_njoins.Add(0);
+                }
+            }           
+
+            if (isBottom)
+            {
+                var intv = new IndependentAttribute<Intervals>();
+                ret_intv = intv.Join(states) as IndependentAttribute<Intervals>;
+               
+                return new Octagon(false, ret_intv, states_oct, states_oct_njoins);
+            }
+
+            ret_intv = this.intervals.Join(states) as IndependentAttribute<Intervals>;
+            if (this.octagons.Count != states_oct.Count)
+                throw new AbsHoudiniInternalError("Incorrect type, number of arguments in octagons do not match!");
+            if (this.octagons_njoins.Count != states_oct_njoins.Count)
+                throw new AbsHoudiniInternalError("Incorrect type, number of arguments in octagons do not match!");
+
+            for (int i = 0; i < this.octagons.Count; i++)
+            {
+                if (this.octagons_njoins.ElementAt(i) >= maxJoin)
+                {
+                    int minval = this.octagons.ElementAt(i).Item1 <= states_oct.ElementAt(i).Item1 ? this.octagons.ElementAt(i).Item1 : Int32.MinValue;
+                    int maxval = this.octagons.ElementAt(i).Item2 >= states_oct.ElementAt(i).Item2 ? this.octagons.ElementAt(i).Item2 : Int32.MaxValue;
+                    ret_oct.Add(new Tuple<int, int>(minval, maxval));
+                    ret_oct_njoins.Add(maxJoin);
+                }
+                else
+                {
+                    int minval, maxval;
+                    bool nonTrivialJoin = false;
+                    if (this.octagons.ElementAt(i).Item1 <= states_oct.ElementAt(i).Item1)
+                    {
+                        minval = this.octagons.ElementAt(i).Item1;
+                    }
+                    else
+                    {
+                        minval = states_oct.ElementAt(i).Item1;
+                        nonTrivialJoin = true;
+                    }
+                    if (this.octagons.ElementAt(i).Item2 >= states_oct.ElementAt(i).Item2)
+                    {
+                        maxval = this.octagons.ElementAt(i).Item2;
+                    }
+                    else
+                    {
+                        maxval = states_oct.ElementAt(i).Item2;
+                        nonTrivialJoin = true;
+                    }
+
+                    ret_oct.Add(new Tuple<int, int>(minval, maxval));
+                    ret_oct_njoins.Add(nonTrivialJoin? this.octagons_njoins.ElementAt(i)+1: this.octagons_njoins.ElementAt(i));
+                }
+            }
+           
+            return new Octagon(false, ret_intv, ret_oct, ret_oct_njoins);
+
+        }
+
+        public Expr Gamma(List<Expr> vars)
+        {
+            if (isBottom) return Expr.False;
+
+            int argsCount = vars.Count * vars.Count - vars.Count;
+            if (this.octagons.Count != argsCount || this.octagons_njoins.Count != argsCount)
+                throw new AbsHoudiniInternalError(
+                    string.Format("Got illegal number of arguments ({0}), total octagonal predicates expected {1}", vars.Count, this.octagons.Count));
+
+            Expr ret = Expr.True;
+            ret = Expr.And(ret, intervals.Gamma(vars));
+            int predNum = 0;
+            for (int i = 0; i < vars.Count; i++)
+            {
+                for (int j = i + 1; j < vars.Count; j++)
+                {
+                    Expr pred = Expr.Sub(vars[i], vars[j]);
+                    if (this.octagons[predNum].Item1 > Int32.MinValue)
+                    {
+                        ret = Expr.And(ret, Expr.Le(Expr.Literal(this.octagons[predNum].Item1), pred));
+                    }
+                    if (this.octagons[predNum].Item2 < Int32.MaxValue)
+                    {
+                        ret = Expr.And(ret, Expr.Le(pred, Expr.Literal(this.octagons[predNum].Item2)));
+                    }
+                    predNum++;
+
+                    pred = Expr.Add(vars[i], vars[j]);
+                    if (this.octagons[predNum].Item1 > Int32.MinValue)
+                    {
+                        ret = Expr.And(ret, Expr.Le(Expr.Literal(this.octagons[predNum].Item1), pred));
+                    }
+                    if (this.octagons[predNum].Item2 < Int32.MaxValue)
+                    {
+                        ret = Expr.And(ret, Expr.Le(pred, Expr.Literal(this.octagons[predNum].Item2)));
+                    }
+                    predNum++;
+                }
+            }
+
+            return ret;
+        }
+
+        public bool TypeCheck(List<Type> argTypes, out string msg)
+        {
+            msg = "";
+            if (!intervals.TypeCheck(argTypes, out msg))
+            {
+                return false;
+            }
+            int argsCount = argTypes.Count * argTypes.Count - argTypes.Count;
+            if (!isBottom && (this.octagons.Count != argsCount || this.octagons_njoins.Count != argsCount))
+            {
+                msg = "Illegal number of arguments";
+                return false;
+            }
+
             return true;
         }
     }
@@ -2011,41 +2178,6 @@ namespace Microsoft.Boogie.Houdini {
             return new IndependentAttribute<T>();
         }
 
-        public IAbstractDomain MakeTop(out bool changed)
-        {
-            var mt = new Func<IAbstractDomain>(() =>
-                {
-                    var ret = new IndependentAttribute<T>();
-                    ret.isBottom = true;
-                    ret.numVars = numVars;
-                    ret.underlyingInstance = underlyingInstance;
-                    ret.varVal = new List<T>();
-                    bool tmp;
-                    for (int i = 0; i < varVal.Count; i++)
-                        ret.varVal.Add(varVal[i].MakeTop(out tmp) as T);
-                    return ret;
-                });
-
-            if (!isBottom)
-            {
-                foreach (var t in varVal)
-                {
-                    var top = t.MakeTop(out changed);
-                    if (changed)
-                    {
-                        return mt();
-                    }
-                }
-            }
-            else
-            {
-                changed = true;
-                return mt();
-            }
-
-            changed = false;
-            return this;
-        }
         public IAbstractDomain Join(List<Model.Element> state)
         {
             SetUnderlyingInstance();
@@ -2059,10 +2191,14 @@ namespace Microsoft.Boogie.Houdini {
             var ret = new IndependentAttribute<T>();
             ret.isBottom = false;
             ret.numVars = state.Count;
-            for(int i = 0; i < state.Count; i++)
+            for (int i = 0; i < state.Count; i++)
             {
                 var sl = new List<Model.Element>();
                 sl.Add(state[i]);
+                /*if (i == 0)
+                {
+                    Console.Out.WriteLine("Value of variable 0 to join is: " + state[i]);
+                }*/
                 T prev = isBottom ? underlyingInstance.Bottom() as T : varVal[i];
                 ret.varVal.Add(prev.Join(sl) as T);
             }
@@ -2099,9 +2235,9 @@ namespace Microsoft.Boogie.Houdini {
             SetUnderlyingInstance();
 
             msg = "";
-            foreach(var t in argTypes) 
+            foreach (var t in argTypes)
             {
-                if(!underlyingInstance.TypeCheck(new List<Type>(new Type[] { t }), out msg))
+                if (!underlyingInstance.TypeCheck(new List<Type>(new Type[] { t }), out msg))
                     return false;
             }
             return true;
@@ -2113,7 +2249,7 @@ namespace Microsoft.Boogie.Houdini {
         // Type name -> Instance
         private static Dictionary<string, IAbstractDomain> abstractDomainInstances = new Dictionary<string, IAbstractDomain>();
         private static Dictionary<string, IAbstractDomain> abstractDomainInstancesFriendly = new Dictionary<string, IAbstractDomain>();
-        
+
         // bitvector operations
         public static Dictionary<int, Function> bvslt = new Dictionary<int, Function>();
 
@@ -2155,6 +2291,8 @@ namespace Microsoft.Boogie.Houdini {
                   System.Tuple.Create("ImplicationDomain", ImplicationDomain.GetBottom() as IAbstractDomain),
                   System.Tuple.Create("PowDomain", PowDomain.GetBottom() as IAbstractDomain),
                   System.Tuple.Create("EqualitiesDomain", EqualitiesDomain.GetBottom() as IAbstractDomain),
+                  System.Tuple.Create("Pentagon", Pentagon.GetBottom() as IAbstractDomain),
+                  System.Tuple.Create("Octagons", Octagon.GetBottom() as IAbstractDomain),
                   System.Tuple.Create("IA[HoudiniConst]", new IndependentAttribute<HoudiniConst>()  as IAbstractDomain),
                   System.Tuple.Create("IA[ConstantProp]", new IndependentAttribute<ConstantProp>()  as IAbstractDomain),
                   System.Tuple.Create("IA[Intervals]", new IndependentAttribute<Intervals>()  as IAbstractDomain),
@@ -2177,7 +2315,6 @@ namespace Microsoft.Boogie.Houdini {
     public interface IAbstractDomain
     {
         IAbstractDomain Bottom();
-        IAbstractDomain MakeTop(out bool changed);
         IAbstractDomain Join(List<Model.Element> state);
         Expr Gamma(List<Expr> vars);
         bool TypeCheck(List<Type> argTypes, out string msg);
@@ -2439,7 +2576,7 @@ namespace Microsoft.Boogie.Houdini {
                 name2Proc.Add(proc.Name, proc);
                 if (impl2Summary.ContainsKey(proc.Name))
                 {
-                    var ens = new Ensures(false, 
+                    var ens = new Ensures(false,
                         impl2Summary[proc.Name].GetSummaryExpr(
                         new Func<string, Expr>(s => null), new Func<string, Expr>(s => null)));
                     ens.Attributes = new QKeyValue(Token.NoToken, "inferred", new List<object>(), ens.Attributes);
@@ -2642,7 +2779,7 @@ namespace Microsoft.Boogie.Houdini {
                 if (UseBilateralAlgo == true && tup.Item1 == impl.Name && tup.Item2)
                     continue;
 
-                var calleeSummary = 
+                var calleeSummary =
                     impl2Summary[tup.Item1].GetSummaryExpr(
                        GetVarMapping(name2Impl[tup.Item1], tup.Item4), prover.VCExprGen);
                 env = gen.AndSimp(env, gen.Eq(tup.Item3, calleeSummary));
@@ -2654,7 +2791,7 @@ namespace Microsoft.Boogie.Houdini {
             sw.Start();
             var lowerTime = TimeSpan.Zero;
 
-            while(true)
+            while (true)
             {
                 var usedLower = true;
                 var query = impl2Summary[impl.Name];
@@ -2668,7 +2805,7 @@ namespace Microsoft.Boogie.Houdini {
                         continue;
                     if (UseBilateralAlgo == true && (tup.Item1 != impl.Name || !tup.Item2))
                         continue;
-                    
+
                     if (UseBilateralAlgo)
                     {
                         query = query.AbstractConsequence(upper);
@@ -2686,7 +2823,7 @@ namespace Microsoft.Boogie.Houdini {
                 reporter.model = null;
                 var vc = gen.AndSimp(env, summaryExpr);
                 vc = gen.Implies(vc, impl2VC[impl.Name]);
-                
+
                 //Console.WriteLine("Checking: {0}", vc);
                 if (CommandLineOptions.Clo.Trace)
                     Console.WriteLine("Verifying {0} ({1}): {2}", impl.Name, usedLower ? "lower" : "ac", query);
@@ -2731,20 +2868,20 @@ namespace Microsoft.Boogie.Houdini {
                 sw.Stop();
                 if (usedLower) lowerTime += sw.Elapsed;
 
-                if(CommandLineOptions.Clo.Trace)
-                    Console.WriteLine("Time taken = " + inc.TotalSeconds.ToString()); 
+                if (CommandLineOptions.Clo.Trace)
+                    Console.WriteLine("Time taken = " + inc.TotalSeconds.ToString());
 
                 if (UseBilateralAlgo)
                 {
                     if (proverOutcome == ProverInterface.Outcome.TimeOut || proverOutcome == ProverInterface.Outcome.OutOfMemory)
                     {
-                        if(CommandLineOptions.Clo.Trace)
+                        if (CommandLineOptions.Clo.Trace)
                             Console.WriteLine("Timeout/Spaceout while verifying " + impl.Name);
                         ret = prev.IsEqual(upper) ? false : true;
                         impl2Summary[impl.Name] = upper;
                         break;
                     }
-                    
+
                     if (reporter.model == null && usedLower)
                         break;
 
@@ -2961,7 +3098,7 @@ namespace Microsoft.Boogie.Houdini {
             }
             Expr postExpr = new NAryExpr(Token.NoToken, new FunctionCall(function), exprs);
             impl.Proc.Ensures.Add(
-                new Ensures(Token.NoToken, false, postExpr, "", 
+                new Ensures(Token.NoToken, false, postExpr, "",
                     new QKeyValue(Token.NoToken, "ah", new List<object>(), null)));
         }
 
@@ -3098,12 +3235,12 @@ namespace Microsoft.Boogie.Houdini {
                     val[v] = new HashSet<int>();
                     val[v].Add(newv);
                 }
-                else if(oldv.Count > 0)
+                else if (oldv.Count > 0)
                 {
                     val[v].Add(newv);
                     if (val[v].Count > MAX)
                         val[v] = new HashSet<int>();
-                } 
+                }
 
             }
         }
@@ -3113,7 +3250,7 @@ namespace Microsoft.Boogie.Houdini {
             VCExpr ret = VCExpressionGenerator.True;
             if (val.Values.Any(v => v == null))
                 return VCExpressionGenerator.False;
-            
+
             foreach (var v in vars)
             {
                 var consts = val[v.Name];
@@ -3145,7 +3282,7 @@ namespace Microsoft.Boogie.Houdini {
                     continue;
 
                 var vexpr = "false";
-                consts.Iter(c => vexpr = 
+                consts.Iter(c => vexpr =
                     string.Format("{0} OR ({1} == {2})", vexpr, v.Name, c));
 
                 ret = string.Format("{0} AND ({1})", ret, vexpr);
@@ -3205,7 +3342,7 @@ namespace Microsoft.Boogie.Houdini {
         #endregion
     }
 
-    public class NamedExpr 
+    public class NamedExpr
     {
         public string name;
         public Expr expr;
@@ -3328,7 +3465,7 @@ namespace Microsoft.Boogie.Houdini {
                 {
                     string s = null;
                     var pos = QKeyValue.FindBoolAttribute(ens.Attributes, "positive");
-                    
+
                     if (QKeyValue.FindBoolAttribute(ens.Attributes, "pre"))
                     {
                         PrePreds[impl.Name].Add(new NamedExpr(ens.Condition));
@@ -3420,7 +3557,7 @@ namespace Microsoft.Boogie.Houdini {
             }
             else
             {
-                if(CommandLineOptions.Clo.Trace) Console.WriteLine("Failed to parse {0} (ignoring)", expr);
+                if (CommandLineOptions.Clo.Trace) Console.WriteLine("Failed to parse {0} (ignoring)", expr);
                 return null;
             }
 
@@ -3437,7 +3574,7 @@ namespace Microsoft.Boogie.Houdini {
                     index = PrePreds[procName].FindIndex(ne => Expr.Not(ne.expr).ToString() == atom.ToString());
                     if (index == -1)
                     {
-                        if(CommandLineOptions.Clo.Trace) Console.WriteLine("Failed to parse {0} (ignoring)", atom);
+                        if (CommandLineOptions.Clo.Trace) Console.WriteLine("Failed to parse {0} (ignoring)", atom);
                         return null;
                     }
                     else
@@ -3468,7 +3605,7 @@ namespace Microsoft.Boogie.Houdini {
                 || !(nexpr.Fun is BinaryOperator)
                 || (nexpr.Fun as BinaryOperator).Op != BinaryOperator.Opcode.And)
             {
-                    ret.Add(expr);
+                ret.Add(expr);
             }
             else
             {
@@ -3521,7 +3658,7 @@ namespace Microsoft.Boogie.Houdini {
                     Debug.Assert(ret != null);
                     return ret;
                 }
-                Debug.Assert(false, "No other op is handled");                
+                Debug.Assert(false, "No other op is handled");
             }
             throw new NotImplementedException(string.Format("Expr of type {0} is not handled", expr.GetType().ToString()));
         }
@@ -3577,12 +3714,13 @@ namespace Microsoft.Boogie.Houdini {
         public static void FindUnsatPairs(VCExpressionGenerator gen, ProverInterface prover)
         {
             unsatPrePredPairs = new HashSet<Tuple<string, int, int, bool, bool>>();
-            unsatPostPredPairs = new HashSet<Tuple<string, int, int, bool, bool>>(); 
+            unsatPostPredPairs = new HashSet<Tuple<string, int, int, bool, bool>>();
 
             var cachePos = new HashSet<Tuple<string, string>>();
             var cacheNeg = new HashSet<Tuple<string, string>>();
             var record = new Action<object, string, int, int, bool, bool>(
-                (map, proc, e1, e2, p1, p2) => {
+                (map, proc, e1, e2, p1, p2) =>
+                {
                     var key = Tuple.Create(proc, e1, e2, p1, p2);
                     if (map == PrePreds)
                         unsatPrePredPairs.Add(key);
@@ -3652,7 +3790,7 @@ namespace Microsoft.Boogie.Houdini {
             gatherLitB.literals.Iter(tup => setb.Add(tup.Item1));
             seta.IntersectWith(setb);
             if (!seta.Any()) return false;
-            
+
             // Create fresh variables
             return CheckIfUnsat(Expr.And(a, b), gen, prover);
         }
@@ -3915,7 +4053,7 @@ namespace Microsoft.Boogie.Houdini {
             {
                 freeSummary = Expr.And(freeSummary, ens.Condition);
             }
-            
+
             for (int i = 0; i < PostPreds[procName].Count; i++)
             {
                 if (value[i].isFalse) continue;
@@ -3944,11 +4082,11 @@ namespace Microsoft.Boogie.Houdini {
             if (isFalse) return "false";
             var first = true;
 
-            for(int i = 0; i < PostPreds[procName].Count; i++) 
+            for (int i = 0; i < PostPreds[procName].Count; i++)
             {
-                if(value[i].isFalse) continue;
-                
-                if(value[i].isTrue)
+                if (value[i].isFalse) continue;
+
+                if (value[i].isTrue)
                     ret += string.Format("{0}{1}", first ? "" : " && ", PostPreds[procName][i]);
                 else
                     ret += string.Format("{0}({1} ==> {2})", first ? "" : " && ", value[i], PostPreds[procName][i]);
@@ -4147,7 +4285,7 @@ namespace Microsoft.Boogie.Houdini {
 
             var ret = VCExpressionGenerator.True;
 
-            for(int i = 0; i < PostPreds[procName].Count; i++)
+            for (int i = 0; i < PostPreds[procName].Count; i++)
             {
                 ret = gen.AndSimp(ret, gen.ImpliesSimp(value[i].ToVcExpr(j => ToVcExpr(PrePreds[procName][j].expr, incarnations, gen), gen), ToVcExpr(PostPreds[procName][i].expr, incarnations, gen)));
             }
@@ -4177,7 +4315,7 @@ namespace Microsoft.Boogie.Houdini {
     {
         List<PredicateAbsConjunct> conjuncts;
         string ProcName;
-        public bool isTrue {get; private set;}
+        public bool isTrue { get; private set; }
         public bool isFalse
         {
             get
@@ -4294,7 +4432,7 @@ namespace Microsoft.Boogie.Houdini {
 
         public override string ToString()
         {
-            if(isTrue) 
+            if (isTrue)
                 return "true";
             var ret = "";
             var first = true;
@@ -4424,7 +4562,7 @@ namespace Microsoft.Boogie.Houdini {
         public static PredicateAbsConjunct And(PredicateAbsConjunct v1, PredicateAbsConjunct v2)
         {
             if (v1.isFalse || v2.isFalse) return new PredicateAbsConjunct(true, v1.ProcName);
-            var ret =  new PredicateAbsConjunct(v1.posPreds.Union(v2.posPreds), v1.negPreds.Union(v2.negPreds), v1.ProcName);
+            var ret = new PredicateAbsConjunct(v1.posPreds.Union(v2.posPreds), v1.negPreds.Union(v2.negPreds), v1.ProcName);
             ret.StrongNormalize();
             return ret;
         }
@@ -4452,7 +4590,7 @@ namespace Microsoft.Boogie.Houdini {
             var pp = posPreds.ToList(); pp.Sort();
             var np = negPreds.ToList(); np.Sort();
             pp.Iter(p => ret = Expr.And(ret, predToExpr(p)));
-            np.Iter(p => ret = Expr.And(ret, Expr.Not(predToExpr(p)))); 
+            np.Iter(p => ret = Expr.And(ret, Expr.Not(predToExpr(p))));
             return ret;
         }
 
@@ -4515,7 +4653,7 @@ namespace Microsoft.Boogie.Houdini {
                 if (lop == null) return ret;
                 if (lop.pos) return ret;
                 if (!lop.label.Equals("@" + assertId.ToString())) return ret;
-                
+
                 //var subexpr = retnary[0] as VCExprNAry;
                 //if (subexpr == null) return ret;
                 //op = subexpr.Op as VCExprBoogieFunctionOp;
@@ -4609,7 +4747,7 @@ namespace Microsoft.Boogie.Houdini {
         public override void OnModel(IList<string> labels, Model model)
         {
             Debug.Assert(model != null);
-            if(CommandLineOptions.Clo.PrintErrorModel >= 1) model.Write(Console.Out);
+            if (CommandLineOptions.Clo.PrintErrorModel >= 1) model.Write(Console.Out);
             this.model = model;
         }
     }
