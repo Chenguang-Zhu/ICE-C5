@@ -15,6 +15,7 @@ using Z3Model = Microsoft.Z3.Model;
 using BoogieModel = Microsoft.Boogie.Model;
 
 namespace Microsoft.Boogie.Z3 {
+
   public class Z3apiProverContext : DeclFreeProverContext {
     private BacktrackDictionary<string, Symbol> symbols = new BacktrackDictionary<string, Symbol>();
     internal BacktrackDictionary<string, Term> constants = new BacktrackDictionary<string, Term>();
@@ -60,7 +61,8 @@ namespace Microsoft.Boogie.Z3 {
       if (logFilename != null)
       {
 #if true
-          Z3Log.Open(logFilename);
+          z3log = new StreamWriter(logFilename);
+          //Z3Log.Open(logFilename);
 #else
           z3.OpenLog(logFilename);
 #endif
@@ -68,7 +70,7 @@ namespace Microsoft.Boogie.Z3 {
       foreach (string tag in debugTraces)
         z3.EnableDebugTrace(tag);
 
-      this.z3log = null;
+      //this.z3log = null;
       this.tm = new Z3TypeCachedBuilder(this);
       this.namer = new UniqueNamer();
     }
@@ -139,7 +141,8 @@ namespace Microsoft.Boogie.Z3 {
             {
                 case TermKind.Numeral:
                     var numstr = arg.GetNumeralString();
-                    if (arg.GetSort().GetSortKind() == SortKind.Int) {
+                    // Pranav -- check this...!!
+                    if (arg.GetSort().GetId() == (uint)SortKind.Int) {
                       res = gen.Integer(Basetypes.BigNum.FromString(numstr));
                     }
                     else {
@@ -156,7 +159,7 @@ namespace Microsoft.Boogie.Z3 {
                     {
                         case DeclKind.Add:
                             if (vcargs.Length == 0) {
-                              if (arg.GetSort().GetSortKind() == SortKind.Int) {
+                              if (arg.GetSort().GetId() == (uint)SortKind.Int) {
                                 res = gen.Integer(Basetypes.BigNum.ZERO);
                               }
                               else {
@@ -177,7 +180,7 @@ namespace Microsoft.Boogie.Z3 {
                             break;
                         case DeclKind.Div:
                             Debug.Assert(vcargs.Length == 2);
-                            res = gen.Function(VCExpressionGenerator.RealDivOp, vcargs[0], vcargs[1]);
+                            res = gen.Function(VCExpressionGenerator.DivROp, vcargs[0], vcargs[1]);
                             break;
                         case DeclKind.Eq:
                             Debug.Assert(vcargs.Length == 2);
@@ -196,7 +199,7 @@ namespace Microsoft.Boogie.Z3 {
                             break;
                         case DeclKind.IDiv:
                             Debug.Assert(vcargs.Length == 2);
-                            res = gen.Function(VCExpressionGenerator.DivOp, vcargs[0], vcargs[1]);
+                            res = gen.Function(VCExpressionGenerator.DivIOp, vcargs[0], vcargs[1]);
                             break;
                         case DeclKind.Iff:
                             Debug.Assert(vcargs.Length == 2);
@@ -225,7 +228,7 @@ namespace Microsoft.Boogie.Z3 {
                             break;
                         case DeclKind.Mul:
                             Debug.Assert(vcargs.Length == 2);
-                            res = gen.Function(VCExpressionGenerator.MulOp, vcargs[0], vcargs[1]);
+                            res = gen.Function(VCExpressionGenerator.MulIOp, vcargs[0], vcargs[1]);
                             break;
                         case DeclKind.Not:
                             Debug.Assert(vcargs.Length == 1);
@@ -246,21 +249,21 @@ namespace Microsoft.Boogie.Z3 {
                             break;
                         case DeclKind.Sub:
                             Debug.Assert(vcargs.Length == 2);
-                            res = gen.Function(VCExpressionGenerator.SubOp, vcargs[0], vcargs[1]);
+                            res = gen.Function(VCExpressionGenerator.SubIOp, vcargs[0], vcargs[1]);
                             break;
                         case DeclKind.True:
                             res = VCExpressionGenerator.True;
                             break;
                         case DeclKind.Uminus:
                             Debug.Assert(vcargs.Length == 1);
-                            var argzero = null;
+                            VCExpr argzero = null;
                             if (vcargs[0].Type.IsInt) {
                               argzero = gen.Integer(Basetypes.BigNum.ZERO);
                             }
                             else {
                               argzero = gen.Real(Basetypes.BigDec.ZERO);
                             }
-                            res = gen.Function(VCExpressionGenerator.SubOp, argzero, vcargs[0]);
+                            res = gen.Function(VCExpressionGenerator.SubIOp, argzero, vcargs[0]);
                             break;
                         case DeclKind.ToInt:
                             Debug.Assert(vcargs.Length == 1);
@@ -334,7 +337,7 @@ namespace Microsoft.Boogie.Z3 {
       foreach (Variable v in f.InParams) {
         domain.Add(v.TypedIdent.Type);
       }
-      if (f.OutParams.Length != 1)
+      if (f.OutParams.Count != 1)
         throw new Exception("Cannot handle functions with " + f.OutParams + " out parameters.");
       Type range = f.OutParams[0].TypedIdent.Type;
 
@@ -377,7 +380,7 @@ namespace Microsoft.Boogie.Z3 {
 
     public void CloseLog() {
 #if true
-        Z3Log.Close();
+        //Z3Log.Close();
 #else
         z3.CloseLog();
 #endif
@@ -522,7 +525,7 @@ namespace Microsoft.Boogie.Z3 {
         z3Model.Display(sw);
         sw.WriteLine("*** END_MODEL");
         var sr = new StringReader(sw.ToString());
-        var models = Microsoft.Boogie.Model.ParseModels(sr);
+        var models = Microsoft.Boogie.Model.ParseModels(sr, "");
         Z3ErrorModelAndLabels e = new Z3ErrorModelAndLabels(models[0], new List<string>(labelStrings));
         boogieErrors.Add(e);
 
@@ -593,7 +596,7 @@ namespace Microsoft.Boogie.Z3 {
         z3Model.Display(sw);
         sw.WriteLine("*** END_MODEL");
         var sr = new StringReader(sw.ToString());
-        var models = Microsoft.Boogie.Model.ParseModels(sr);
+        var models = Microsoft.Boogie.Model.ParseModels(sr, "");
         Z3ErrorModelAndLabels e = new Z3ErrorModelAndLabels(models[0], new List<string>(labelStrings));
         boogieErrors.Add(e);
 
