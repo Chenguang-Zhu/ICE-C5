@@ -1395,6 +1395,18 @@ namespace VC {
       return GenerateVCAux(impl, controlFlowVariableExpr, label2absy, proverContext);
     }
 
+    public VCExpr P_GenerateVC(Implementation/*!*/ impl, HashSet<string> constantsAssumed, VCExpr controlFlowVariableExpr, out Dictionary<int, Absy>/*!*/ label2absy, ProverContext proverContext)
+    {
+        Contract.Requires(impl != null);
+        Contract.Requires(constantsAssumed != null);
+        Contract.Requires(proverContext != null);
+        Contract.Ensures(Contract.ValueAtReturn(out label2absy) != null);
+        Contract.Ensures(Contract.Result<VCExpr>() != null);
+
+        label2absy = new Dictionary<int, Absy>();
+        return P_GenerateVCAux(impl, constantsAssumed, controlFlowVariableExpr, label2absy, proverContext);
+    }
+
     public VCExpr GenerateVCAux(Implementation/*!*/ impl, VCExpr controlFlowVariableExpr, Dictionary<int, Absy>/*!*/ label2absy, ProverContext proverContext) {
       Contract.Requires(impl != null);
       Contract.Requires(proverContext != null);
@@ -1443,6 +1455,61 @@ namespace VC {
       }
       CumulativeAssertionCount += assertionCount;
       return vc;
+    }
+
+    public VCExpr P_GenerateVCAux(Implementation/*!*/ impl, HashSet<string> constantsAssumed, VCExpr controlFlowVariableExpr, Dictionary<int, Absy>/*!*/ label2absy, ProverContext proverContext)
+    {
+        Contract.Requires(impl != null);
+        Contract.Requires(proverContext != null);
+        Contract.Ensures(Contract.Result<VCExpr>() != null);
+
+        TypecheckingContext tc = new TypecheckingContext(null);
+        impl.Typecheck(tc);
+
+        VCExpr vc;
+        int assertionCount;
+        switch (CommandLineOptions.Clo.vcVariety)
+        {
+            case CommandLineOptions.VCVariety.Structured:
+                vc = P_VCViaStructuredProgram(impl, constantsAssumed, label2absy, proverContext, out assertionCount);
+                break;
+            case CommandLineOptions.VCVariety.Block:
+                vc = P_FlatBlockVC(impl, constantsAssumed, label2absy, false, false, false, proverContext, out assertionCount);
+                break;
+            case CommandLineOptions.VCVariety.BlockReach:
+                vc = P_FlatBlockVC(impl, constantsAssumed, label2absy, false, true, false, proverContext, out assertionCount);
+                break;
+            case CommandLineOptions.VCVariety.Local:
+                vc = P_FlatBlockVC(impl, constantsAssumed, label2absy, true, false, false, proverContext, out assertionCount);
+                break;
+            case CommandLineOptions.VCVariety.BlockNested:
+                vc = P_NestedBlockVC(impl, constantsAssumed, label2absy, false, proverContext, out assertionCount);
+                break;
+            case CommandLineOptions.VCVariety.BlockNestedReach:
+                vc = P_NestedBlockVC(impl, constantsAssumed, label2absy, true, proverContext, out assertionCount);
+                break;
+            case CommandLineOptions.VCVariety.Dag:
+                if (cce.NonNull(CommandLineOptions.Clo.TheProverFactory).SupportsDags || CommandLineOptions.Clo.FixedPointEngine != null)
+                {
+                    vc = P_DagVC(cce.NonNull(impl.Blocks[0]), constantsAssumed, controlFlowVariableExpr, label2absy, new Hashtable/*<Block, VCExpr!>*/(), proverContext, out assertionCount);
+                }
+                else
+                {
+                    vc = P_LetVC(cce.NonNull(impl.Blocks[0]), constantsAssumed, controlFlowVariableExpr, label2absy, proverContext, out assertionCount);
+                }
+                break;
+            case CommandLineOptions.VCVariety.DagIterative:
+                vc = P_LetVCIterative(impl.Blocks, constantsAssumed, controlFlowVariableExpr, label2absy, proverContext, out assertionCount);
+                break;
+            case CommandLineOptions.VCVariety.Doomed:
+                vc = P_FlatBlockVC(impl, constantsAssumed, label2absy, false, false, true, proverContext, out assertionCount);
+                break;
+            default:
+                Contract.Assert(false);
+                throw new cce.UnreachableException();  // unexpected enumeration value
+        }
+        CumulativeAssertionCount += assertionCount;
+        return vc;
     }
 
     void CheckIntAttributeOnImpl(Implementation impl, string name, ref int val) {
@@ -1909,7 +1976,20 @@ namespace VC {
         Contract.Assert(traceNodes.Contains(entryBlock));
         trace.Add(entryBlock);
 
-        Counterexample newCounterexample = TraceCounterexample(entryBlock, traceNodes, trace, model, MvInfo, incarnationOriginMap, context, new Dictionary<TraceLocation, CalleeCounterexampleInfo>());
+          /*
+        foreach (DictionaryEntry tracenode in traceNodes)
+        {
+            var absy = tracenode.Key;
+            if ((absy as AssumeCmd) != null)
+            {
+                Console.WriteLine(absy.ToString());
+            }
+        }
+          */
+
+        List<Cmd> assumedCmds = new List<Cmd>();
+
+        Counterexample newCounterexample = TraceCounterexample(entryBlock, traceNodes, trace, assumedCmds, model, MvInfo, incarnationOriginMap, context, new Dictionary<TraceLocation, CalleeCounterexampleInfo>());
 
         if (newCounterexample == null)
           return;
@@ -2637,7 +2717,8 @@ namespace VC {
     }
 
     static Counterexample TraceCounterexample(
-                          Block/*!*/ b, Hashtable/*!*/ traceNodes, List<Block>/*!*/ trace, Model errModel, ModelViewInfo mvInfo,
+                          Block/*!*/ b, Hashtable/*!*/ traceNodes, List<Block>/*!*/ trace, List<Cmd> /*!*/ assumedCmds,
+                          Model errModel, ModelViewInfo mvInfo,
                           Dictionary<Incarnation, Absy/*!*/>/*!*/ incarnationOriginMap,
                           ProverContext/*!*/ context,
                           Dictionary<TraceLocation/*!*/, CalleeCounterexampleInfo/*!*/>/*!*/ calleeCounterexamples)
@@ -2645,6 +2726,7 @@ namespace VC {
       Contract.Requires(b != null);
       Contract.Requires(traceNodes != null);
       Contract.Requires(trace != null);
+      Contract.Requires(assumedCmds != null);
       Contract.Requires(cce.NonNullDictionaryAndValues(incarnationOriginMap));
       Contract.Requires(context != null);
       Contract.Requires(cce.NonNullDictionaryAndValues(calleeCounterexamples));
@@ -2659,10 +2741,14 @@ namespace VC {
         // Skip if 'cmd' not contained in the trace or not an assert
         if (cmd is AssertCmd && traceNodes.Contains(cmd))
         {
-          Counterexample newCounterexample = AssertCmdToCounterexample((AssertCmd)cmd, transferCmd, trace, errModel, mvInfo, context);
+          Counterexample newCounterexample = AssertCmdToCounterexample((AssertCmd)cmd, transferCmd, trace, assumedCmds, errModel, mvInfo, context);
           Contract.Assert(newCounterexample != null);
           newCounterexample.AddCalleeCounterexample(calleeCounterexamples);
           return newCounterexample;
+        }
+        else if (cmd is AssumeCmd && traceNodes.Contains(cmd))
+        {
+            assumedCmds.Add(cmd);
         }
       }
       
@@ -2674,7 +2760,7 @@ namespace VC {
           Contract.Assert(bb != null);
           if (traceNodes.Contains(bb)){
             trace.Add(bb);
-            return TraceCounterexample(bb, traceNodes, trace, errModel, mvInfo, incarnationOriginMap, context, calleeCounterexamples);
+            return TraceCounterexample(bb, traceNodes, trace, assumedCmds, errModel, mvInfo, incarnationOriginMap, context, calleeCounterexamples);
           }
         }
       }
@@ -2682,11 +2768,13 @@ namespace VC {
       return null;
     }
 
-    public static Counterexample AssertCmdToCounterexample(AssertCmd cmd, TransferCmd transferCmd, List<Block> trace, Model errModel, ModelViewInfo mvInfo, ProverContext context) 
+    public static Counterexample AssertCmdToCounterexample(AssertCmd cmd, TransferCmd transferCmd, List<Block> trace, List<Cmd> assumedCmds,
+                                                           Model errModel, ModelViewInfo mvInfo, ProverContext context) 
     {
       Contract.Requires(cmd != null);
       Contract.Requires(transferCmd != null);
       Contract.Requires(trace != null);
+      Contract.Requires(assumedCmds != null);
       Contract.Requires(context != null);
       Contract.Ensures(Contract.Result<Counterexample>() != null);
 
@@ -2697,7 +2785,7 @@ namespace VC {
       {
         AssertRequiresCmd assertCmd = (AssertRequiresCmd)cmd;
         Contract.Assert(assertCmd != null);
-        CallCounterexample cc = new CallCounterexample(trace, assertCmd.Call, assertCmd.Requires, errModel, mvInfo, context);
+        CallCounterexample cc = new CallCounterexample(trace, assumedCmds, assertCmd.Call, assertCmd.Requires, errModel, mvInfo, context);
         cc.relatedInformation = relatedInformation;
         return cc;
       }
@@ -2705,16 +2793,52 @@ namespace VC {
       {
         AssertEnsuresCmd assertCmd = (AssertEnsuresCmd)cmd;
         Contract.Assert(assertCmd != null);
-        ReturnCounterexample rc = new ReturnCounterexample(trace, transferCmd, assertCmd.Ensures, errModel, mvInfo, context);
+        ReturnCounterexample rc = new ReturnCounterexample(trace, assumedCmds, transferCmd, assertCmd.Ensures, errModel, mvInfo, context);
         rc.relatedInformation = relatedInformation;
         return rc;
       }
       else 
       {
-        AssertCounterexample ac = new AssertCounterexample(trace, (AssertCmd)cmd, errModel, mvInfo, context);
+        AssertCounterexample ac = new AssertCounterexample(trace, assumedCmds, (AssertCmd)cmd, errModel, mvInfo, context);
         ac.relatedInformation = relatedInformation;
         return ac;
       }
+    }
+
+    public static Counterexample AssertCmdToCounterexample(AssertCmd cmd, TransferCmd transferCmd, List<Block> trace,
+                                                         Model errModel, ModelViewInfo mvInfo, ProverContext context)
+    {
+        Contract.Requires(cmd != null);
+        Contract.Requires(transferCmd != null);
+        Contract.Requires(trace != null);
+        Contract.Requires(context != null);
+        Contract.Ensures(Contract.Result<Counterexample>() != null);
+
+        List<string> relatedInformation = new List<string>();
+
+        // See if it is a special assert inserted in translation
+        if (cmd is AssertRequiresCmd)
+        {
+            AssertRequiresCmd assertCmd = (AssertRequiresCmd)cmd;
+            Contract.Assert(assertCmd != null);
+            CallCounterexample cc = new CallCounterexample(trace, assertCmd.Call, assertCmd.Requires, errModel, mvInfo, context);
+            cc.relatedInformation = relatedInformation;
+            return cc;
+        }
+        else if (cmd is AssertEnsuresCmd)
+        {
+            AssertEnsuresCmd assertCmd = (AssertEnsuresCmd)cmd;
+            Contract.Assert(assertCmd != null);
+            ReturnCounterexample rc = new ReturnCounterexample(trace, transferCmd, assertCmd.Ensures, errModel, mvInfo, context);
+            rc.relatedInformation = relatedInformation;
+            return rc;
+        }
+        else
+        {
+            AssertCounterexample ac = new AssertCounterexample(trace, (AssertCmd)cmd, errModel, mvInfo, context);
+            ac.relatedInformation = relatedInformation;
+            return ac;
+        }
     }
 
     static VCExpr LetVC(Block startBlock,
@@ -2731,6 +2855,24 @@ namespace VC {
       List<VCExprLetBinding> bindings = new List<VCExprLetBinding>();
       VCExpr startCorrect = LetVC(startBlock, controlFlowVariableExpr, label2absy, blockVariables, bindings, proverCtxt, out assertionCount);
       return proverCtxt.ExprGen.Let(bindings, startCorrect);
+    }
+
+    static VCExpr P_LetVC(Block startBlock,
+                      HashSet<string> constantsAssumed,
+                      VCExpr controlFlowVariableExpr,
+                      Dictionary<int, Absy> label2absy,
+                      ProverContext proverCtxt,
+                      out int assertionCount)
+    {
+        Contract.Requires(startBlock != null);
+        Contract.Requires(proverCtxt != null);
+
+        Contract.Ensures(Contract.Result<VCExpr>() != null);
+
+        Hashtable/*<Block, LetVariable!>*/ blockVariables = new Hashtable/*<Block, LetVariable!!>*/();
+        List<VCExprLetBinding> bindings = new List<VCExprLetBinding>();
+        VCExpr startCorrect = P_LetVC(startBlock, constantsAssumed, controlFlowVariableExpr, label2absy, blockVariables, bindings, proverCtxt, out assertionCount);
+        return proverCtxt.ExprGen.Let(bindings, startCorrect);
     }
 
     static VCExpr LetVCIterative(List<Block> blocks,
@@ -2809,6 +2951,94 @@ namespace VC {
       return proverCtxt.ExprGen.Let(bindings, blockVariables[blocks[0]]);
     }
 
+
+    static VCExpr P_LetVCIterative(List<Block> blocks,
+                               HashSet<string> constantsAssumed,
+                               VCExpr controlFlowVariableExpr,
+                               Dictionary<int, Absy> label2absy,
+                               ProverContext proverCtxt,
+                               out int assertionCount,
+                               bool isPositiveContext = true)
+    {
+        Contract.Requires(blocks != null);
+        Contract.Requires(proverCtxt != null);
+        Contract.Ensures(Contract.Result<VCExpr>() != null);
+
+        assertionCount = 0;
+
+        Graph<Block> dag = new Graph<Block>();
+        dag.AddSource(blocks[0]);
+        foreach (Block b in blocks)
+        {
+            GotoCmd gtc = b.TransferCmd as GotoCmd;
+            if (gtc != null)
+            {
+                Contract.Assume(gtc.labelTargets != null);
+                foreach (Block dest in gtc.labelTargets)
+                {
+                    Contract.Assert(dest != null);
+                    dag.AddEdge(dest, b);
+                }
+            }
+        }
+        IEnumerable sortedNodes = dag.TopologicalSort();
+        Contract.Assert(sortedNodes != null);
+
+        Dictionary<Block, VCExprVar> blockVariables = new Dictionary<Block, VCExprVar>();
+        List<VCExprLetBinding> bindings = new List<VCExprLetBinding>();
+        VCExpressionGenerator gen = proverCtxt.ExprGen;
+        Contract.Assert(gen != null);
+        foreach (Block block in sortedNodes)
+        {
+            VCExpr SuccCorrect;
+            GotoCmd gotocmd = block.TransferCmd as GotoCmd;
+            if (gotocmd == null)
+            {
+                ReturnExprCmd re = block.TransferCmd as ReturnExprCmd;
+                if (re == null)
+                {
+                    SuccCorrect = VCExpressionGenerator.True;
+                }
+                else
+                {
+                    SuccCorrect = proverCtxt.BoogieExprTranslator.Translate(re.Expr);
+                    if (isPositiveContext)
+                    {
+                        SuccCorrect = gen.Not(SuccCorrect);
+                    }
+                }
+            }
+            else
+            {
+                Contract.Assert(gotocmd.labelTargets != null);
+                List<VCExpr> SuccCorrectVars = new List<VCExpr>(gotocmd.labelTargets.Count);
+                foreach (Block successor in gotocmd.labelTargets)
+                {
+                    Contract.Assert(successor != null);
+                    VCExpr s = blockVariables[successor];
+                    if (controlFlowVariableExpr != null)
+                    {
+                        VCExpr controlFlowFunctionAppl = gen.ControlFlowFunctionApplication(controlFlowVariableExpr, gen.Integer(BigNum.FromInt(block.UniqueId)));
+                        VCExpr controlTransferExpr = gen.Eq(controlFlowFunctionAppl, gen.Integer(BigNum.FromInt(successor.UniqueId)));
+                        s = gen.Implies(controlTransferExpr, s);
+                    }
+                    SuccCorrectVars.Add(s);
+                }
+                SuccCorrect = gen.NAry(VCExpressionGenerator.AndOp, SuccCorrectVars);
+            }
+
+            VCContext context = new VCContext(label2absy, proverCtxt, controlFlowVariableExpr, isPositiveContext);
+            VCExpr vc = Wlp.P_Block(block, constantsAssumed, SuccCorrect, context);
+            assertionCount += context.AssertionCount;
+
+            VCExprVar v = gen.Variable(block.Label + "_correct", Bpl.Type.Bool);
+            bindings.Add(gen.LetBinding(v, vc));
+            blockVariables.Add(block, v);
+        }
+
+        return proverCtxt.ExprGen.Let(bindings, blockVariables[blocks[0]]);
+    }
+
     static VCExpr LetVC(Block block,
                         VCExpr controlFlowVariableExpr,
                         Dictionary<int, Absy> label2absy,
@@ -2876,6 +3106,83 @@ namespace VC {
       return v;
     }
 
+
+    static VCExpr P_LetVC(Block block,
+                      HashSet<string> constantsAssumed,
+                      VCExpr controlFlowVariableExpr,
+                      Dictionary<int, Absy> label2absy,
+                      Hashtable/*<Block, VCExprVar!>*/ blockVariables,
+                      List<VCExprLetBinding/*!*/>/*!*/ bindings,
+                      ProverContext proverCtxt,
+                      out int assertionCount)
+    {
+        Contract.Requires(block != null);
+        Contract.Requires(blockVariables != null);
+        Contract.Requires(cce.NonNullElements(bindings));
+        Contract.Requires(proverCtxt != null);
+
+        Contract.Ensures(Contract.Result<VCExpr>() != null);
+
+        assertionCount = 0;
+
+        VCExpressionGenerator gen = proverCtxt.ExprGen;
+        Contract.Assert(gen != null);
+        VCExprVar v = (VCExprVar)blockVariables[block];
+        if (v == null)
+        {
+            /*
+             * For block A (= block), generate:
+             *   LET_binding A_correct = wp(A_body, (/\ S \in Successors(A) :: S_correct))
+             * with the side effect of adding the let bindings to "bindings" for any
+             * successor not yet visited.
+             */
+            VCExpr SuccCorrect;
+            GotoCmd gotocmd = block.TransferCmd as GotoCmd;
+            if (gotocmd == null)
+            {
+                ReturnExprCmd re = block.TransferCmd as ReturnExprCmd;
+                if (re == null)
+                {
+                    SuccCorrect = VCExpressionGenerator.True;
+                }
+                else
+                {
+                    SuccCorrect = proverCtxt.BoogieExprTranslator.Translate(re.Expr);
+                }
+            }
+            else
+            {
+                Contract.Assert(gotocmd.labelTargets != null);
+                List<VCExpr> SuccCorrectVars = new List<VCExpr>(gotocmd.labelTargets.Count);
+                foreach (Block successor in gotocmd.labelTargets)
+                {
+                    Contract.Assert(successor != null);
+                    int ac;
+                    VCExpr s = P_LetVC(successor, constantsAssumed, controlFlowVariableExpr, label2absy, blockVariables, bindings, proverCtxt, out ac);
+                    assertionCount += ac;
+                    if (controlFlowVariableExpr != null)
+                    {
+                        VCExpr controlFlowFunctionAppl = gen.ControlFlowFunctionApplication(controlFlowVariableExpr, gen.Integer(BigNum.FromInt(block.UniqueId)));
+                        VCExpr controlTransferExpr = gen.Eq(controlFlowFunctionAppl, gen.Integer(BigNum.FromInt(successor.UniqueId)));
+                        s = gen.Implies(controlTransferExpr, s);
+                    }
+                    SuccCorrectVars.Add(s);
+                }
+                SuccCorrect = gen.NAry(VCExpressionGenerator.AndOp, SuccCorrectVars);
+            }
+
+
+            VCContext context = new VCContext(label2absy, proverCtxt, controlFlowVariableExpr);
+            VCExpr vc = Wlp.P_Block(block, constantsAssumed, SuccCorrect, context);
+            assertionCount += context.AssertionCount;
+
+            v = gen.Variable(block.Label + "_correct", Bpl.Type.Bool);
+            bindings.Add(gen.LetBinding(v, vc));
+            blockVariables.Add(block, v);
+        }
+        return v;
+    }
+
     static VCExpr DagVC(Block block,
                          VCExpr controlFlowVariableExpr,
                          Dictionary<int, Absy> label2absy,
@@ -2930,6 +3237,67 @@ namespace VC {
 
       blockEquations.Add(block, vc);
       return vc;
+    }
+
+    static VCExpr P_DagVC(Block block,
+                       HashSet<string> constantsAssumed,
+                       VCExpr controlFlowVariableExpr,
+                       Dictionary<int, Absy> label2absy,
+                       Hashtable/*<Block, VCExpr!>*/ blockEquations,
+                       ProverContext proverCtxt,
+                       out int assertionCount)
+    {
+        Contract.Requires(block != null);
+        Contract.Requires(label2absy != null);
+        Contract.Requires(blockEquations != null);
+        Contract.Requires(proverCtxt != null);
+        Contract.Ensures(Contract.Result<VCExpr>() != null);
+
+        assertionCount = 0;
+        VCExpressionGenerator gen = proverCtxt.ExprGen;
+        Contract.Assert(gen != null);
+        VCExpr vc = (VCExpr)blockEquations[block];
+        if (vc != null)
+        {
+            return vc;
+        }
+
+        /* 
+         * For block A (= block), generate:
+         *   wp(A_body, (/\ S \in Successors(A) :: DagVC(S)))
+         */
+        VCExpr SuccCorrect = null;
+        GotoCmd gotocmd = block.TransferCmd as GotoCmd;
+        if (gotocmd != null)
+        {
+            foreach (Block successor in cce.NonNull(gotocmd.labelTargets))
+            {
+                Contract.Assert(successor != null);
+                int ac;
+                VCExpr c = P_DagVC(successor, constantsAssumed, controlFlowVariableExpr, label2absy, blockEquations, proverCtxt, out ac);
+                assertionCount += ac;
+                if (controlFlowVariableExpr != null)
+                {
+                    VCExpr controlFlowFunctionAppl = gen.ControlFlowFunctionApplication(controlFlowVariableExpr, gen.Integer(BigNum.FromInt(block.UniqueId)));
+                    VCExpr controlTransferExpr = gen.Eq(controlFlowFunctionAppl, gen.Integer(BigNum.FromInt(successor.UniqueId)));
+                    c = gen.Implies(controlTransferExpr, c);
+                }
+                SuccCorrect = SuccCorrect == null ? c : gen.And(SuccCorrect, c);
+            }
+        }
+        if (SuccCorrect == null)
+        {
+            SuccCorrect = VCExpressionGenerator.True;
+        }
+
+        VCContext context = new VCContext(label2absy, proverCtxt, controlFlowVariableExpr);
+        vc = Wlp.P_Block(block, constantsAssumed, SuccCorrect, context);
+        assertionCount += context.AssertionCount;
+
+        //  gen.MarkAsSharedFormula(vc);  PR: don't know yet what to do with this guy
+
+        blockEquations.Add(block, vc);
+        return vc;
     }
 
     static VCExpr FlatBlockVC(Implementation impl,
@@ -3009,6 +3377,97 @@ namespace VC {
 
       assertionCount = context.AssertionCount;
       return gen.Let(programSemantics, proofObligation);
+    }
+
+    static VCExpr P_FlatBlockVC(Implementation impl,
+                            HashSet<string> constantsAssumed,
+                            Dictionary<int, Absy> label2absy,
+                            bool local, bool reach, bool doomed,
+                            ProverContext proverCtxt,
+                            out int assertionCount)
+    {
+        Contract.Requires(impl != null);
+        Contract.Requires(label2absy != null);
+        Contract.Requires(proverCtxt != null);
+        Contract.Requires(!local || !reach);  // "reach" must be false for local
+
+        VCExpressionGenerator gen = proverCtxt.ExprGen;
+        Contract.Assert(gen != null);
+        Hashtable/* Block --> VCExprVar */ BlkCorrect = BlockVariableMap(impl.Blocks, "_correct", gen);
+        Hashtable/* Block --> VCExprVar */ BlkReached = reach ? BlockVariableMap(impl.Blocks, "_reached", gen) : null;
+
+        List<Block> blocks = impl.Blocks;
+        Contract.Assert(blocks != null);
+        // block sorting is now done on the VCExpr
+        //    if (!local && (cce.NonNull(CommandLineOptions.Clo.TheProverFactory).NeedsBlockSorting) {
+        //      blocks = SortBlocks(blocks);
+        //    }
+
+        VCExpr proofObligation;
+        if (!local)
+        {
+            proofObligation = cce.NonNull((VCExprVar)BlkCorrect[impl.Blocks[0]]);
+        }
+        else
+        {
+            List<VCExpr> conjuncts = new List<VCExpr>(blocks.Count);
+            foreach (Block b in blocks)
+            {
+                Contract.Assert(b != null);
+                VCExpr v = cce.NonNull((VCExprVar)BlkCorrect[b]);
+                conjuncts.Add(v);
+            }
+            proofObligation = gen.NAry(VCExpressionGenerator.AndOp, conjuncts);
+        }
+
+        VCContext context = new VCContext(label2absy, proverCtxt);
+        Contract.Assert(context != null);
+
+        List<VCExprLetBinding> programSemantics = new List<VCExprLetBinding>(blocks.Count);
+        foreach (Block b in blocks)
+        {
+            Contract.Assert(b != null);
+            /* 
+             * In block mode,
+             * For a return block A, generate:
+             *   A_correct <== wp(A_body, true)  [post-condition has been translated into an assert]
+             * For all other blocks, generate:
+             *   A_correct <== wp(A_body, (/\ S \in Successors(A) :: S_correct))
+             * 
+             * In doomed mode, proceed as in block mode, except for a return block A, generate:
+             *   A_correct <== wp(A_body, false)  [post-condition has been translated into an assert]
+             *
+             * In block reach mode, the wp(A_body,...) in the equations above change to:
+             *   A_reached ==> wp(A_body,...)
+             * and the conjunction above changes to:
+             *   (/\ S \in Successors(A) :: S_correct \/ (\/ T \in Successors(A) && T != S :: T_reached))
+             *
+             * In local mode, generate:
+             *   A_correct <== wp(A_body, true)
+             */
+            VCExpr SuccCorrect;
+            if (local)
+            {
+                SuccCorrect = VCExpressionGenerator.True;
+            }
+            else
+            {
+                SuccCorrect = SuccessorsCorrect(b, BlkCorrect, BlkReached, doomed, gen);
+            }
+
+            VCExpr wlp = Wlp.P_Block(b, constantsAssumed, SuccCorrect, context);
+            if (BlkReached != null)
+            {
+                wlp = gen.Implies(cce.NonNull((VCExprVar)BlkReached[b]), wlp);
+            }
+
+            VCExprVar okVar = cce.NonNull((VCExprVar)BlkCorrect[b]);
+            VCExprLetBinding binding = gen.LetBinding(okVar, wlp);
+            programSemantics.Add(binding);
+        }
+
+        assertionCount = context.AssertionCount;
+        return gen.Let(programSemantics, proofObligation);
     }
 
     private static Hashtable/* Block --> VCExprVar */ BlockVariableMap(List<Block/*!*/>/*!*/ blocks, string suffix,
@@ -3115,6 +3574,56 @@ namespace VC {
       return gen.Let(ps, proofObligation);
     }
 
+    static VCExpr P_NestedBlockVC(Implementation impl,
+                              HashSet<string> constantsAssumed,
+                              Dictionary<int, Absy> label2absy,
+                              bool reach,
+                              ProverContext proverCtxt,
+                              out int assertionCount)
+    {
+        Contract.Requires(impl != null);
+        Contract.Requires(label2absy != null);
+        Contract.Requires(proverCtxt != null);
+        Contract.Requires(impl.Blocks.Count != 0);
+        Contract.Ensures(Contract.Result<VCExpr>() != null);
+
+        VCExpressionGenerator gen = proverCtxt.ExprGen;
+        Contract.Assert(gen != null);
+        Graph<Block> g = Program.GraphFromImpl(impl);
+
+        Hashtable/* Block --> VCExprVar */ BlkCorrect = BlockVariableMap(impl.Blocks, "_correct", gen);
+        Hashtable/* Block --> VCExprVar */ BlkReached = reach ? BlockVariableMap(impl.Blocks, "_reached", gen) : null;
+
+        Block startBlock = cce.NonNull(impl.Blocks[0]);
+        VCExpr proofObligation = (VCExprVar)BlkCorrect[startBlock];
+        Contract.Assert(proofObligation != null);
+        VCContext context = new VCContext(label2absy, proverCtxt);
+
+        Hashtable/*Block->int*/ totalOrder = new Hashtable/*Block->int*/();
+        {
+            List<Block> blocks = impl.Blocks;
+
+            // block sorting is now done on the VCExpr
+            //   if (((!)CommandLineOptions.Clo.TheProverFactory).NeedsBlockSorting) {
+            //     blocks = SortBlocks(blocks);
+            //   }
+            int i = 0;
+            foreach (Block b in blocks)
+            {
+                Contract.Assert(b != null);
+                totalOrder[b] = i;
+                i++;
+            }
+        }
+
+        VCExprLetBinding programSemantics = P_NestedBlockEquation(cce.NonNull(impl.Blocks[0]), constantsAssumed, BlkCorrect, BlkReached, totalOrder, context, g, gen);
+        List<VCExprLetBinding> ps = new List<VCExprLetBinding>(1);
+        ps.Add(programSemantics);
+
+        assertionCount = context.AssertionCount;
+        return gen.Let(ps, proofObligation);
+    }
+
     private static VCExprLetBinding NestedBlockEquation(Block b,
         Hashtable/*Block-->VCExprVar*/ BlkCorrect,
         Hashtable/*Block-->VCExprVar*/ BlkReached,
@@ -3170,6 +3679,66 @@ namespace VC {
       return gen.LetBinding(okVar, wlp);
     }
 
+
+    private static VCExprLetBinding P_NestedBlockEquation(Block b,
+      HashSet<string> constantsAssumed,
+      Hashtable/*Block-->VCExprVar*/ BlkCorrect,
+      Hashtable/*Block-->VCExprVar*/ BlkReached,
+      Hashtable/*Block->int*/ totalOrder,
+      VCContext context,
+      Graph<Block> g,
+      Microsoft.Boogie.VCExpressionGenerator gen)
+    {
+        Contract.Requires(b != null);
+        Contract.Requires(BlkCorrect != null);
+        Contract.Requires(totalOrder != null);
+        Contract.Requires(g != null);
+        Contract.Requires(context != null);
+
+        Contract.Ensures(Contract.Result<VCExprLetBinding>() != null);
+
+        /*
+        * For a block b, return:
+        *   LET_BINDING b_correct = wp(b_body, X)
+        * where X is:
+        *   LET (THOSE d \in DirectDominates(b) :: BlockEquation(d))
+        *   IN (/\ s \in Successors(b) :: s_correct)
+        * 
+        * When the VC-expression generator does not support LET expresions, this
+        * will eventually turn into:
+        *   b_correct <== wp(b_body, X)
+        * where X is:
+        *   (/\ s \in Successors(b) :: s_correct)
+        *   <==
+        *   (/\ d \in DirectDominatees(b) :: BlockEquation(d))
+        *
+        * In both cases above, if BlkReached is non-null, then the wp expression
+        * is instead:
+        *   b_reached ==> wp(b_body, X)
+        */
+
+        VCExpr SuccCorrect = SuccessorsCorrect(b, BlkCorrect, null, false, gen);
+        Contract.Assert(SuccCorrect != null);
+
+        List<VCExprLetBinding> bindings = new List<VCExprLetBinding>();
+        foreach (Block dominee in GetSortedBlocksImmediatelyDominatedBy(g, b, totalOrder))
+        {
+            Contract.Assert(dominee != null);
+            VCExprLetBinding c = P_NestedBlockEquation(dominee, constantsAssumed, BlkCorrect, BlkReached, totalOrder, context, g, gen);
+            bindings.Add(c);
+        }
+
+        VCExpr X = gen.Let(bindings, SuccCorrect);
+        VCExpr wlp = Wlp.P_Block(b, constantsAssumed, X, context);
+        if (BlkReached != null)
+        {
+            wlp = gen.Implies((VCExprVar)BlkReached[b], wlp);
+            Contract.Assert(wlp != null);
+        }
+        VCExprVar okVar = cce.NonNull((VCExprVar)BlkCorrect[b]);
+        return gen.LetBinding(okVar, wlp);
+    }
+
     /// <summary>
     /// Returns a list of g.ImmediatelyDominatedBy(b), but in a sorted order, hoping to steer around
     /// the nondeterminism problems we've been seeing by using just this call.
@@ -3213,6 +3782,30 @@ namespace VC {
       assertionCount = ctxt.AssertionCount;
       return vcexp;
       #endregion
+    }
+
+    static VCExpr P_VCViaStructuredProgram
+                      (Implementation impl, HashSet<string> constantsAssumed, Dictionary<int, Absy> label2absy,
+                       ProverContext proverCtxt,
+                       out int assertionCount)
+    {
+        Contract.Requires(impl != null);
+        Contract.Requires(label2absy != null);
+        Contract.Requires(proverCtxt != null);
+        Contract.Ensures(Contract.Result<VCExpr>() != null);
+
+        #region Convert block structure back to a "regular expression"
+        RE r = DAG2RE.Transform(cce.NonNull(impl.Blocks[0]));
+        Contract.Assert(r != null);
+        #endregion
+
+        VCContext ctxt = new VCContext(label2absy, proverCtxt);
+        Contract.Assert(ctxt != null);
+        #region Send wlp(program,true) to Simplify
+        var vcexp = Wlp.P_RegExpr(r, constantsAssumed, VCExpressionGenerator.True, ctxt);
+        assertionCount = ctxt.AssertionCount;
+        return vcexp;
+        #endregion
     }
 
     /// <summary> 
