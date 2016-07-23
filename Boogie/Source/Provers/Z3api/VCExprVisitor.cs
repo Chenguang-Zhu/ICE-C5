@@ -15,7 +15,7 @@ using Microsoft.Z3;
 
 namespace Microsoft.Boogie.Z3
 {
-    using System.Numerics.BigInteger;
+    using System.Numerics;
 
     public class Z3apiExprLineariser : IVCExprVisitor<Term, LineariserOptions>
     {
@@ -104,19 +104,22 @@ namespace Microsoft.Boogie.Z3
             return z3.MkGe(unwrapChildren[0], unwrapChildren[1]);
           }
 
-          if (op == VCExpressionGenerator.AddOp) {
+          if (op == VCExpressionGenerator.AddIOp)
+          {
             return z3.MkAdd(unwrapChildren);
           }
 
-          if (op == VCExpressionGenerator.SubOp) {
+          if (op == VCExpressionGenerator.SubIOp)
+          {
             return z3.MkSub(unwrapChildren);
           }
 
-          if (op == VCExpressionGenerator.DivOp || op == VCExpressionGenerator.RealDivOp) {
+          if (op == VCExpressionGenerator.DivIOp || op == VCExpressionGenerator.DivROp)
+          {
             return z3.MkDiv(unwrapChildren[0], unwrapChildren[1]);
           }
 
-          if (op == VCExpressionGenerator.MulOp) {
+          if (op == VCExpressionGenerator.MulIOp) {
             return z3.MkMul(unwrapChildren);
           }
 
@@ -153,7 +156,8 @@ namespace Microsoft.Boogie.Z3
             else if (node is VCExprRealLit) {
                 string m = ((VCExprRealLit)node).Val.Mantissa.ToString();
                 BigInteger e = ((VCExprRealLit)node).Val.Exponent;
-                string f = BigInteger.Pow(10, e.Abs);
+                string f = BigInteger.Pow(BigInteger.Abs(e), 10).ToString();
+                
 
                 if (e == 0) {
                     return cm.z3.MkNumeral(m, cm.z3.MkRealSort());
