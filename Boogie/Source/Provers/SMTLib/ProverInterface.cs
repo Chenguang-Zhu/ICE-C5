@@ -844,7 +844,7 @@ namespace Microsoft.Boogie.SMTLib
         FlushProverWarnings();
 
         var errorsLeft = CommandLineOptions.Clo.ProverCCLimit;
-
+        
         if (CommandLineOptions.Clo.ConcurrentHoudini) {
           Contract.Assert(taskID >= 0);
           errorsLeft = CommandLineOptions.Clo.Cho[taskID].ProverCCLimit;
